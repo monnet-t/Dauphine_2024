@@ -1,0 +1,470 @@
+---
+title: "Enjeux climatique en assurance : Introduction aux données climatiques"
+author: "Thibault MONNET"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+require(pacman)
+  pacman::p_load(c("data.table","dplyr","knitr","sf","viridis","leaflet","plotly","RColorBrewer","mapproj","units","mapsf","cartography","fitdistrplus","extRemes","evd","ks"), install = F, update = F, character.only = T)
+
+```
+
+# Dauphine 2024
+
+## 1. Des données spatiales et temporelles
+
+Les données climatiques peuvent être de différentes formes et selon les usages et les besoins, il faudra parfois les extrapoler avant de s'en servir. Ce cours n'abordera pas la modélisation spatio-temporelle, toutefois un exemple de données de ce type pourra être manipulé.
+
+Avant toute chose il est nécessaire de présenter les formats et outils des données spatiales. En traitement spatial / cartographique (SIG - Système d'Information Géographique), il faut voir chaque donnée comme une couche (un calque). Ces données pouvant se superposer ou contenir des détails (attributs) permettant de les typer et les comprendre. La jointure entre 2 couches se fait via une superposition spatiale et non par une clé unique.
+
+![](D:/Utilisateurs/s046120/Pictures/carto.jpg){height="600"}
+
+### 1.0 Toute carte est fausse
+
+Grande nouvelle : "LA TERRE EST RONDE !!!!"
+
+Une carte sert à représenter des données issues d'un espace à 3 dimensions dans un espace qui n'en contient que 2. La cartographie est une science ancienne, qui a été révolutionné par la conquête de l'espace, puis par l'aire de l'informatique. Il est à présent possible de stocker de la donnée spatiale. Les sciences de l'informatique géographique sont connues sous le nom de **Géomatique**.
+
+Vous êtes vous déjà posé la question : *le Groenland est-il si grand que cela ?*
+
+Voici ce que dit la carte "classique"  
+![](https://i.insider.com/53875349ecad04d95029a00d?width=905){height="400"}
+
+Alors que si nous y regardons de plus près :  
+![](D:/utilisateurs/s046120/Formation/Dauphine/Cours 2024/groenland_vs_affrica.png){height="400"}
+
+Le nom des techniques permettant de réaliser le changement de dimensions est la **projection**, il en existe plusieurs types, selon ce que l'auteur souhaite réaliser. Une carte aura donc un parti pris.
+
+Les codes et normes des différentes projections font partis d'un système de coordonnées mondiale : [EPSG](https://epsg.io/)
+
+Il existe 2 types de projections, celle visant à conserver les "formes", on parle de projections conformes **conformal** - elles tenteront de préserver la représentation des éléments tels qu'ils sont vus sur le globe - et celles visant à présenter une échelle constante sur la carte on parle de zones identiques ou **equal area**.
+
+![](D:/utilisateurs/s046120/Formation/Dauphine/Cours 2024/CRS.png)
+
+La projection mondiale la plus connue est la projection de **Mercator** (du mathématicien et cartographe éponyme), notée WGS84. Pour être exact, la projection **pseudo-Mercator** utilisée par Google Maps est très certainement la projection la plus connue.
+
+![](https://upload.wikimedia.org/wikipedia/commons/2/24/Tissot_indicatrix_world_map_Mercator_proj.svg){height="400"}
+
+Sur l'image précédente, on peut voir avec la taille des cercles, que cette projection va agrandir certaines zones. Elle a l'avantage de conserver les formes, c'est pour cela qu'elle est utilisée par Google notamment, un virage à 90° sera conservé, ce qui est appréciable pour du guidage GPS.
+
+Pour comprendre un peu mieux ce que fait cette projection, on peut s'attarder sur l'image suivante. En effet, la quasi-sphère qu'est la terre va être découpée, puis les bords étirés.
+
+![](https://upload.wikimedia.org/wikipedia/commons/9/9b/Transverse_Mercator_meridian_stripes_20deg.jpg){height="400"}
+
+Attention, cette projection ne permet pas de conserver les distances ! Nous verrons dans le cours comment passer d'une projection à l'autre et l'intérêt de faire ces changements. On retiendra que pour calculer une distance il peut-être préférable de transformer nos données.
+
+### 1.1 Les données vectorielles
+
+Comme évoqué précédemment, on retrouve 2 familles de données spatiales, les données vectorielles sont les plus simples à appréhender. En effet, ces données vectorielles font références à des points, des lignes ou à des polygones.
+
+#### 1.1.a Les **Points**
+
+Les **points** sont identifiés par des coordonnées à 2 dimensions (longitude et latitude) et pour un système de projection donné. Il s'agit par exemple de la localisation géographique d'une adresse (on parlera de géocodage des adresses) ou encore d'un lieu d'intérêt (point de vue, emplacement d'une station météorologique ou de mesure de débit d'une rivière...). C'est le niveau le plus simple.
+
+Pour visualiser les points, le script suivant permet de télécharger et de mettre en forme les trajectoires des ouragans dans le bassin Atlantique Nord depuis 1851.
+
+```{r Points}
+# 1 - Charger les données sur les ouragans du NHC : https://www.aoml.noaa.gov/hrd/hurdat/hurdat2.html 
+source("./pgm/hurdat.R")
+Atlantic <- data.table(get_hurdat("AL"))
+# Description des données : https://www.aoml.noaa.gov/hrd/hurdat/hurdat2-format.pdf
+
+# 2 - Nettoyage et mise en forme
+Atlantic <- Atlantic[!is.na(DateTime)]
+# On va créer des colonnes pour les couleurs à tracer, la catégorie et en fonction de l'intensité de l'évènement à chaque instant t matérialisé par un point
+Atlantic <- Atlantic %>% mutate(color = as.factor(case_when(Status == 'HU' ~ 'red',
+                                                 Status == 'TS' ~ 'orange',
+                                                 Status == 'TD' ~ 'yellow',
+                                                 TRUE ~ 'gray')), 
+                               Categ = as.factor(case_when(Status == 'HU' ~ 'Hurricane',
+                                                           Status == 'TS' ~ 'Tropical Storm',
+                                                           Status == 'TD' ~ 'Tropical Depression',
+                                                           TRUE ~ 'Other')),
+                               intensity = as.factor(case_when(Status == 'HU' ~ paste0('Hurricane: ',
+                                                        case_when(Atlantic$Wind >= 137 ~ 'Cat5',
+                                                                  (Atlantic$Wind >= 113 & Atlantic$Wind < 137) ~ 'Cat4',
+                                                                  (Atlantic$Wind >=  96 & Atlantic$Wind < 113) ~ 'Cat3',
+                                                                  (Atlantic$Wind >=  83 & Atlantic$Wind <  96) ~ 'Cat2',
+                                                                  (Atlantic$Wind >=  64 & Atlantic$Wind <  83) ~ 'Cat1')),
+                                                     Status == 'TS' ~ 'Tropical Storm', 
+                                                     Status == 'TD' ~ 'Tropical Depression',
+                                                     TRUE ~ 'Other')),
+                               Year = as.numeric(year(DateTime)),
+                               Month = as.numeric(month(DateTime)),
+                               TimePeriod10y = (paste0(as.character(round(Year-4.9,digits = -1)),"s")))
+
+# 3 - Transformation en format spatial
+# Les données de projection sont décalée sur la longitude, avant de transformer la base en données spatial il faut donc les corriger
+Atlantic$Lon[Atlantic$Lon < -300] <- Atlantic$Lon[Atlantic$Lon < -300] + 360
+
+# Rappel : https://epsg.io/4326 : projection de Mercator
+AtlanticSF <- st_as_sf(Atlantic, coords = c("Lon","Lat"), crs = 4326)
+# Visualiser les points 
+plot(AtlanticSF["intensity"])
+
+
+```
+
+#### 1.1.b Les **lignes**
+
+Les **lignes** sont des points reliés entre eux et ne formant pas un chemin clos, on parlerait sinon de *polygones*. Si l'on revient à nos ouragans, l'exercice suivant consiste à relier entre eux les points, par système, pour former des lignes de trajectoire.
+
+```{r Lignes}
+# 1 - Les fonctions de SF pour créer des lignes (ou des multi-lignes)
+Tracks <- AtlanticSF %>% 
+  group_by(Key) %>%
+  summarise(do_union = FALSE) %>%
+  st_cast("LINESTRING")
+  
+# 2 - Nettoyage : certains systèmes n'ont qu'on point et ce type de géométrie n'est pas comaptible avec les lignes... 
+rmv <- Atlantic[,list(points = length(DateTime)), by = list(Key)][points == 1]
+
+Tracks <- Tracks[!(Tracks$Key %in% rmv$Key),]
+plot(st_geometry(Tracks))
+
+
+```
+
+#### 1.1.c Les **polygones**
+
+Les **polygones** sont des lignes reliées entre elles et formant un chemin clos, cela peut correspondre notamment aux contours d'une île./
+L'étape suivante consiste à récupérer et tracer la Martinique (car les données sont simple d'accès)./
+Dans un second temps nous pourrons travailler sur une carte dynamique pour mieux visualiser les résultats./
+Pour réaliser les cartes il est nécessaire de récupérer les fonds de cartes, certains peuvent être disponibles directement dans les données de R (et de ses librairies), à défaut des cartes par département sont disponible sur [data.gouv](https://www.data.gouv.fr/en/datasets/carte-des-departements-2-1/)
+
+```{r polygones}
+# 1 - Charger les données de la Martinique (disponible aussi dans Cartography)
+mtq <- mapsf::mf_get_mtq()
+plot(st_geometry(mtq), main = "Martinique")
+
+# 2 - Leaflet et les cartes dynamiques
+# Conversion de la carte dans un format compatible avec les carte leaflet (Mercator)
+mtq2 <- mtq %>% sf::st_transform('+proj=longlat +datum=WGS84')
+# Appel de l'application leaflet, ajout des tuiles de fonds (par défat OSM) et des polygones de la Martinique, en rouge
+leaflet(mtq2, height = "500") %>% addTiles() %>% addPolygons(color = "red")
+
+# 3 - Leaflet et lignes :
+leaflet(mtq2, height = "500") %>% addTiles() %>% addPolylines(data = Tracks) %>% addPolygons(color = "red")
+
+
+```
+
+Ces cartes permettant d'empiler les données nous permettent d'envisager un comptage des systèmes ayant traversé la Martinique depuis 1851...
+
+### 1.2 Les opérations basiques sur les données vectorielles
+
+Une fois les données récupérées et chargées ou mises en carte, il est possible d'effectuer des opérations avec. Notamment avec les polygones, pour les regrouper, par exemple...
+
+```{r vect_base}
+
+
+# 1 - Calcul d'un centroïde de chaque polygone (peut servir pour une jointure spatiale)
+mtq_c <- st_centroid(mtq)
+plot(st_geometry(mtq))
+plot(st_geometry(mtq_c), add=TRUE, cex=1.2, col="red", pch=20)
+
+# 2 - calcul d'une matrice de distance 
+mat <- st_distance(x=mtq_c,y=mtq_c)
+mat[1:5,1:5]
+
+# 3 - Agréger des polygones 
+mtq_u <- st_union(mtq)
+plot(st_geometry(mtq), col="lightblue")
+plot(st_geometry(mtq_u), add=T, lwd=2, border = "red")
+
+# 4 - Construire une zone tampon / un buffer 
+mtq_b <- st_buffer(x = mtq_u, dist = 5000)
+plot(st_geometry(mtq), col="lightblue")
+plot(st_geometry(mtq_u), add=T, lwd=2)
+plot(st_geometry(mtq_b), add=T, lwd=2, border = "red")
+
+# 5 - Réaliser une intersection
+m <- rbind(c(700015,1624212), c(700015,1641586), c(719127,1641586), c(719127,1624212), c(700015,1624212))
+p <- st_sf(st_sfc(st_polygon(list(m))), crs = st_crs(mtq))
+plot(st_geometry(mtq))
+plot(p, border="red", lwd=2, add=T)
+mtq_z <- st_intersection(x = mtq, y = p)
+plot(st_geometry(mtq))
+plot(st_geometry(mtq_z), col="red", border="green", add=T)
+
+# 6 les polygones de Voronoi 
+mtq_v <- st_voronoi(x = st_union(mtq_c))
+mtq_v <- st_intersection(st_cast(mtq_v), st_union(mtq))
+mtq_v <- st_join(x = st_sf(mtq_v), y = mtq_c, join=st_intersects)
+mtq_v <- st_cast(mtq_v, "MULTIPOLYGON")
+plot(st_geometry(mtq_v), col='lightblue')
+
+
+
+```
+
+Les **polygones de Thiessen ou de Voronoï** sont des polygones formant un pavage intégral dans lequel chaque point est entouré par un espace (une "cellule") comprenant tous les points plus proches de ce point que d'un autre. Fondamentaux en modélisation spatiale, leur usage est devenu plus courant en géographie à mesure que les outils de calcul informatique se sont démocratisés. "Dans un réseau parfait de centres équipotents, les polygones de Thiessen sont des hexagones", précise Roger Brunet (2017), ce qui renvoie à la théorie des lieux centraux.
+
+C'est une façon de découper un territoire à partir de points. Par exemple si vous disposez de 600 points de mesure du vent en France (à un instant t), vous pouvez découper la France en polygones de Voronoi, puis calculer dans chaque polygone une estimation des vitesses du vent au sein de chaque polygone et cela en fonction des points le constituant.
+
+```{r cartography}
+# save map
+# png(filename = "./data/map1.png", width = 400, height = 467, res = 100)
+# set margins
+# ar(mar=c(0,0,0,0))
+# Countries plot
+plot(st_geometry(mtq), col = "lightblue4",
+     border = "lightblue3", bg = "lightblue1")
+# Population plot on proportional symbols
+propSymbolsLayer(x = mtq, 
+                 var = "POP", 
+                 legend.title.txt = "Total/npopulation")
+# Title
+mtext(text = "Population en Martinique", side = 3, line = -1)
+# dev.off()
+```
+
+### 1.3 Les données Raster
+
+Les données spatiales de type Raster sont assimilables à des images en terme de visualisation et à des matrices en terme de structure de données. En d'autres termes ce sont des grilles espacées spatialement et comportant à chaque noeud ou intersection une ou plusieurs informations.
+
+La définition du raster et sa projection géographique permettant de connaître l'espacement de ce maillage./
+Un raster peut se composer de plusieurs couches, les images en ont 3 pour gérer les couleurs (RGB) à 4 pour la transparence et chaque couche portera une information. Les images satellites ont régulièrement 7 bandes, pour gérer l'infrarouge et l'ultraviolet. Pour le stockage des données, on peut voir ces bandes comme une troisième dimension de notre matrice.
+
+Certains format de données prennent également en charge la temporalité, ainsi il est possible qu'une "couche" d'un raster comporte l'axe temporel.
+
+Un raster, en plus des données "matricielles" dispose de méta-données permettant de gérer l'aspect spacial. Parmi ces données on retrouve la projection, l'extension et la résolution.
+
+La **projection** permet de savoir dans quel système l'on se trouve. Rien de nouveau par rapport à précédemment.
+
+L'**extension** défini la zone géographique couverte par le raster, dans la projection donnée. Cela permet de positionner ce dernier sur une carte et surtout de réaliser des calculs spatiaux.
+
+Enfin, la **résolution** défini la densité de point au sein de l'extension, on peut aussi voir cela comme le nombre de pixels en hauteur et largeur si l'on fait la comparaison avec les images. Meilleurs est cette dernière et plus l'image / la donnée sera précise.
+
+![](D:/Utilisateurs/s046120/Pictures/raster_multiple_resolutions.png)
+
+Pour plus d'information sur les raster, voir le site [neonscience.org](https://www.neonscience.org/resources/learning-hub/tutorials/raster-res-extent-pixels-r) en anglais.
+
+Parmi les opérations "simples" que l'on peut faire sur les données spatiales, on retrouve l'estimation de la densité, ou encore le comptage au sein d'une grille (un raster donc) d'un nombre de points. Cette densité peut être brute ou lissée, par exemple via une méthode de noyaux ([KDE](https://cran.r-project.org/web/packages/ks/vignettes/kde.pdf) : Kernel Density estimation).
+
+
+```{r kde}
+# library(ks)
+# données pour lesquelles on cherche la densité : nos points
+U=Atlantic[,c("Lon","Lat")]
+# retrait des lignes avec données manquante
+U=U[!is.na(U$Lon),]
+
+# Matrice de contrainte (cf. PDF associé à la méthode)
+H=Hpi.diag(x=U)
+
+# Estimation de l'estimateur de la densité par méthode des noyaux
+fhat=kde(U,H,xmin=c(min(U[,1]),min(U[,2])),xmax=c(max(U[,1]),max(U[,2])))
+
+# Carte Atlantique Nord : 
+# on fixe les bornes de l'image xlim/ylim selon la longitude/lattitude 
+map("world",xlim=c(-100,-50),ylim=c(10,50),col="light yellow",fill=TRUE)
+# Tracé classique, avec l'option add = T (ajout de la library sf pour le spatial)
+plot(fhat, display = "image", add = T)
+# On ajoute les limites administrative
+map("world",add = T)
+
+# Carte Focus Antilles : idem sur une zone plus restreinte
+map("world",xlim=c(-70,-50),ylim=c(10,25),col="light yellow",fill=TRUE)
+plot(fhat, display = "image", add = T)
+map("world",add = T)
+
+
+```
+
+On notera qu'il existe d'autres méthodes de lissage sur des données de comptage / densité. Pour cela, vous disposez de toutes les méthodologies matricielles vues dans vos cours, ainsi que tout ce qui va toucher le traitement d'image. En effet, un raster étant une matrice et une image, vous pouvez lisser le contenu d'une cellule par des approches matricielles ou par des opérations visant à réaliser un flou, à retirer un bruit, appliquer des opérations morphologiques... 
+
+Le package [imageR](http://dahtah.github.io/imager/imager.html) permet un grand nombre de traitements. Attention, les matrices d'image et de raster ne se lisent pas dans le même sens, une prudence est donc à prévoir lors du passage d'un format à l'autre. 
+
+Enfin, si l'on souhaite réaliser autre chose qu'un comptage, comme par exemple estimer la vitesse moyenne au sein des cellules puis la lisser, ou encore lisser un quantile extrême de vitesse de vent observée, il faudra réaliser les calculs manuellement.
+
+La première étape consiste à définir votre grille (la base de votre raster), son extension et sa résolution, puis vous devrez réaliser une jointure entre vos données spatiales vectorielles et ces grilles. Ensuite il devient possible de réaliser des statistiques dans vos cellules et donc de définir vos couches de raster. 
+
+Des méthodes d'interpolation spatiales vous permettent ensuite de lisser vos données. A noter que ces méthodes servent également à partir de données ponctuelles non positionnées sur une grille pour réaliser vos raster. 
+L'une d'entre elle, assez efficace et présentée dans ce cours, est l'interpolation par distance inverse. Pour résumer, chaque point va donner une information sur sa zone, plus la distance entre 1 point et 1 zone à prédire est grande, moins la contribution du point y sera forte. 
+
+Parmi les autres méthodes, on retrouve le KNN donc par plus proche voisin (distance euclidienne ou géodésique) ou encore le Krigeage qui va nécessiter d'analyser au préalable vos données, leur variance... Ces éléments ne sont pas vu dans ce cours d'introduction.
+
+QGIS, logiciel de traitement SIG permet de manipuler ce type de données visuellement et avec une interface utilisateur. Vous pouvez vous référer à la notice sur l'interpolation qui se trouve [ici](https://docs.qgis.org/3.28/fr/docs/gentle_gis_introduction/spatial_analysis_interpolation.html), en français.
+
+
+```{r raster}
+# 1 : création de la grille avec st_make_grid
+# 1.1 : Extension de nos données : la fonction st_bbox permet d'obtenir les bornes des données
+st_bbox(AtlanticSF)
+#  xmin   ymin   xmax   ymax 
+# -136.9    7.0   63.0   83.0 
+
+# la fonction st_make_grid utilise par défaut l'extension et un découpage en 10 colonnes et 10 lignes, au regard de nos données, cela semble trop large
+c(diff(st_bbox(AtlanticSF)[c(1, 3)]), diff(st_bbox(AtlanticSF)[c(2, 4)]))
+#  xmax  ymax 
+# 199.9  76.0 
+
+# On note que les trajectoires s'étendent sur 200° de longitude et 76° de latitudes, nous proposons donc de modifier la découpage par défaut n = c(10,10), par une approche plus fine : c(200,76), soit 1° de Longitude et 1° de Latitude (forme carrée)
+
+# 1.2 : création de la grille
+grid = st_make_grid(AtlanticSF, n = c(200,76), what = "polygons", square = TRUE) # square = FALSE permet de créer des hexagones
+
+# 1.3 : Conversion en sf et ajout d'un ID
+grid_sf = st_sf(grid) %>%
+  # add grid ID
+  mutate(grid_id = 1:length(lengths(grid)))
+
+# 2 : comptage du nombre de points dans chaque cellule de la grille
+# https://gis.stackexchange.com/questions/323698/counting-points-in-polygons-with-sf-package-of-r
+grid_sf$n = lengths(st_intersects(grid_sf, AtlanticSF))
+
+# Retrait des cellules sans valeurs (i.e. pas de points à l'intérieur) pour réduire la taille
+count = filter(grid_sf, n > 0)
+
+# Palette de couleur : pour représenter nos résutlats
+pal <- colorNumeric(
+  palette = "Reds",
+  domain = range(count$n))
+
+# Carte dynamique
+leaflet(count) %>% addTiles() %>% addPolygons(color = NA, fillColor = ~pal(n), fillOpacity = 0.5)
+
+```
+
+On notera que le passage des points vers le raster s'est fait via la fonction "length" qui permet de réaliser un comptage, il est possible d'estimer une vitesse de vent maximale par exemple, puis ensuite de réfléchir à comment interpoler ces données sur les pojnts de la grilles sans observations.
+
+
+# TP n°2 : Identification des systèmes cyclonique ayant approché les Antilles Françaises
+
+L'objectif de ce TP est d'isoler les systèmes ayant traversé l'arc Antillais à proximité de nos îles, de les dénombrer selon leur intensité et si possible de calculer une période de retour, par intensité, de ces phénomènes.
+
+Pour simplifier le calcul nous prendrons 3 points (centroïdes) pour représenter les îles de la Martinique, la Guadeloupe et de St Martin (et St Barthélémy). Cette étape a déja été réalisée.
+
+Pour la première sélection, il est recommandé de comptabiliser les systèmes approchant à moins de 100km de ces points. Une fois les trajectoires sélectionnées, il faudra les catégoriser, par exemple avec le point le plus proche de nos îles pour chaque trajectoire. Enfin et si le temps le permet, une méthode permettant de passer de ce comptage à l'estimation des périodes de retour pourra être rappelé (n'hésitez pas à proposer vos idées).
+
+## 0 - Les Antilles françaises
+
+```{r TP0}
+df <- as.data.frame(list(Ile = c("St Martin","Guadeloupe","Martinique"),
+                     lon = c(-63.1,-61.5,-61), lat = c(18.05,16.25,14.6)))
+
+```
+
+Cette étape d'initialisation permet de charger les coordonnées des 3 îles sur lesquelles notre étude va s'attarder. Il faut pour la suite, s'assurer d'avoir chargé les données Hurdat (cf. cours) et réaliser différentes étapes.
+
+## 1 - Construction de la zone de danger
+
+La zone de danger correspond au buffer de 100 km autour de l'arc matérialisé par les 3 îles avec les coordonnées précédentes.  
+
+
+```{r TP1}
+
+
+```
+
+## 2 - Croisement des lignes de trajectoire des ouragans avec la zone de danger
+
+Une fois la zone "à risque" définie, on va sélectionner les trajectoires qui la traverse. 
+```{r TP2}
+
+
+```
+
+## 3 - Enrichir les traces de l'information (intensité, vitesse de vent...) contenue dans le point de la trace le plus proche des îles
+
+Cette étape consiste à définir le point le plus proche de nos îles pour chacune des 174 trajectoires dangereuses. 
+
+Pour cette étape, qui peut s'avérer longue (calcul des distances entre un grand nombre de point), une première précaution vise donc à ne travailler que sur les 174 trajectoires dangereuses. La seconde précaution va elle être de se contenter de filtrer les points de ces trajectoires à l'intérieur d'une zone d'intérêt. On pourra définir la zone d'intérêt comme les coordonnées min et max des îles élargie d'1 ou 2 degré(s).
+
+```{r TP3}
+
+
+```
+
+
+## 4 - Statistiques et étude de la période de retour
+
+L'objectif final est d'établir une période de retour, soit l'inverse de la probabilité de survenance d'un évènement. Si l'on s'attarde sur la vitesse du vent, la première étape serait donc de tenter de modéliser la distribution de la vitesse du vent à partir des 174 points disponibles. Méfiance toutefois avec cette approche, si plusieurs évènements ont lieu certaines années, l'objectif étant de mesurer plutôt un vent maximal annuel, il faudra retravailler les données. 
+
+Pour rappel, les vitesses de vent dans le fichier sont exprimés en noeuds
+
+```{r units}
+
+# Rappel sur les unités :
+unites <- data.table(valid_udunits())
+# unites[grepl("knot",unites$name_singular)]
+# unites[grepl("nautic",unites$name_singular)]
+# 1 noeud vaut donc 1852m / heure ou 1.852 km/h
+# max(DT$Wind) * 1.852 # conversion en km/h
+
+
+```
+
+1 noeud vaut donc 1852m / heure ou 1.852 km/h et la vitesse maximale mesurée à l'approche des côtes était de 287 km/h en vent moyen...
+
+### 4.1 - Analyse annuelle
+
+```{r TP4.1, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+
+```
+
+
+
+### 4.2 - Approche "Simple"
+
+Dans cette section nous allons établir une série temporelle contenant l'évènement annuel ayant les caractéristiques de vitesse de l'évènement le plus fort. Pour les années sans évènement nous modéliserons notre loi en partant du principe que nous observons des données tronquées (seuil 35 noeuds).
+
+```{r TP4.2.1}
+
+```
+
+Le choix de la loi à retenir s'effectue, comme dans le premier TP, entre la loi Beta, une GEV et la Distribution de Pareto Généralisée (nouvelle loi candidate) avec un seuil de 35 noeuds.
+
+Estimons les périodes de retour liées
+
+```{r TP4.2.2}
+
+  
+```
+
+Anaylyse...
+
+
+
+### 4.3 - Approche plus complète
+
+Prenons le temps d'étudier l'intégralité des données et non plus le maximum annuel.
+
+```{r TP4.3.1}
+
+
+```
+
+Nous rappellerons qu'en 4.1 nous avons identifié que l'historique ancien n'était pas à périmètre identique de l'historique récent. Ces graphiques montrent le lien immédiat entre la catégorie (fonction du vent) et la vitesse du vent. Concernant les données récentes, la distribution s'écarte assez fortement de la distribution complète (et tronquées), ce qui semble moins le cas de la distribution des évènements "majeurs" (type "Tropical Storm" **TS** et "Hurricane" **HU**).
+
+**L'idée ici serait de construire une approche Bayésienne du système.**
+
+La difficulté de l'exercice est de mettre sous forme d'équation notre problématique./
+Posons X la vitesse de vent maximale au passage dans la zone de danger et Y la catégorie de l'évènement.
+
+$P(X|Y)=/frac{P(Y|X).P(X)}{P(Y)}$
+
+Nous pouvons donc à ajuster $P(X /ge x|Y=y)$ la probabilité que X dépasse x noeuds, sachant que les évènements sont de type Tempête Tropicale ou Ouragan.  
+Nous cherchons cependant à ajuster $P(X/ge x)$ quelle que soit la catégorie y de Y...  
+La probabilité $P(Y=y)$ peut s'ajuster sur un set plus récent et complet et se traduire comme la probabilité qu'un évènement depuis 2000 soit de type Tempête Tropicale ou Ouragan.
+
+La dernière partie de l'équation, soit $P(Y=y|X>x)$ est elle instantanée puisque par construction, la catégorie est définie par la vitesse du vent. Ainsi, dès que la vitesse atteint 34 noeuds le système peut être considéré comme Tempête Tropicale ou Ouragan.
+
+NB : l'interdépendance ici peut remettre en cause l'approche Bayésienne !
+
+On pourra alors définir $P(X/ge x) = P(Y=y) * /frac{P(X/ge x|Y=y)}{P(Y=y|X/ge x)}$ avec pour x /> 34 $P(Y=y|X/ge x) = 1$.
+
+Nous estimerons empiriquement $P(Y=y)$ de sorte que sur l'ensemble des évènements observés depuis l'an 2000, la probabilité d'observer un évènement de type **TS** ou **HU** soit le nombre de ces évènements rapporté au nombre total d'évènements observé sur la période.
+
+```{r TP4.3.2}
+
+
+```
+
+
