@@ -1,0 +1,1050 @@
+---
+title: "Théorie des Valeurs Extrêmes"
+subtitle: "Introduction et pratique"
+author: "Thibault MONNET"
+date: "26/02/2024"
+output:   
+  rmdformats::material:
+    highlight: kate
+  html_document: dafault
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+require(pacman)
+  pacman::p_load(c("data.table","dplyr","knitr","kableExtra","sf","viridis","leaflet","plotly","RColorBrewer","mapproj","units","mapsf","cartography","fitdistrplus","extRemes","evd","fExtremes","ks"), install = F, update = F, character.only = T)
+```
+
+# 1 - Objectifs
+
+-   Introduire les concepts fondamentaux de la Théorie des Valeurs Extrêmes ;
+-   Présenter quelques outils pour les manipuler, le tout appliqué aux données climatiques et économiques ;
+-   Faire le lien avec les sciences climatiques et les pertes économiques induites par les phénomènes extrêmes.
+
+# 2 - La théorie
+
+Les extrêmes sont des évènements rares, mal maîtrisés et ayant des conséquences importantes.
+
+Dans le cas standard, on s'intéresse à la distribution dans son ensemble.
+La plupart des données étant concentrées dans le centre de la distribution, les extrêmes, à gauche où à droite, sont rares.\
+De plus, passé un certain seuil, nous ne disposons plus d'observation et une approche par quantile empirique sera limitée à la donnée la plus forte mesurée.
+
+La Théorie des Valeurs Extrêmes (TVE) permet d'analyser les queues de distribution grâce à des approches scientifiques et rationnelles, même là où il n'y a pas de données d'observation.
+
+Nous verrons que l'une des limites de cette approche est sa sensibilité.
+En effet, un nouveau point extrême mesuré est susceptible de modifier fortement l'ajustement réalisé au préalable.
+
+Dit autrement, **les modèles basés sur la TVE sont évolutifs et doivent être mis à jour régulièrement**.
+
+```{r densite, fig.cap="Densité et points extrêmes"}
+set.seed(123)
+x <- rnorm(50000,5,1)
+plot(density(x), main="densité", ylab="f(x)", xlab = "x", col = "blue")
+points(x=rnorm(100,5,1), y = rep(0,100), col = "red")
+
+```
+
+Sur la figure précédente on note qu'une distribution (ici normale) contient un grand nombre d'observation au cœur de la distribution et très peu de points aux extrêmes.
+**L'objet du cours est de travailler sur ces extrêmes.**
+
+## 2.1 Un premier cas pratique dans l'histoire
+
+Au Pays-Bas, plus du tiers du territoire est situé en dessous du niveau de la mer.
+Les phénomènes météorologiques extrêmes peuvent donc avoir des conséquences désastreuses comme ce fut le cas de la [tempête de 1953](https://fr.wikipedia.org/wiki/Raz-de-mar%C3%A9e_de_1953_en_mer_du_Nord) qui entraîna un niveau des eaux très conséquent (+3,85m) par rapport au niveau zéro d'Amsterdam.
+Lors de cet évènement, on a recensé plus de 1800 morts aux Pays-Bas et des dommages conséquents sur la vie animale, les cultures et les bâtiments.\
+Pour protéger les habitants et les infrastructures du pays, le gouvernement néerlandais a lancé un vaste plan de construction de digues : **le plan Delta**.
+
+Pour ce plan pluriannuel, il a été décidé de construire des digues de telle sorte que, sur une année donnée, la probabilité de submersion soit de $p = 10^{-4}$.
+La question à présent est de savoir à quelle hauteur de digue cela correspond.
+Cette question a été posée à une équipe de statisticiens qui disposait pour y répondre des valeurs des hauteurs d'eau maximales relevées durant 111 ans lors des 1877 tempêtes survenues.
+Ces valeurs sont notées dans la suite $x_{1}, x_{2}, \dots, x_{n}$ avec n = 1877.
+
+La première étape a consisté à proposer un modèle pour ces observations.
+Les experts ont supposé qu'elles étaient issues de n variables aléatoires $X_{1}, \dots, X_{n}$ indépendantes et de même loi.
+
+L'hypothèse d'indépendance est admissible si l'on par du principe que la force d'une tempête ne dépendant pas de celle de la précédente, toutefois les *clusters*, évènements successifs rapprochés, peuvent avoir une influence les uns sur les autres.
+Dans le cas de nos paires néerlandais, l'indice étant une hauteur d'eau, donc un indicateur croisée entre tempête et phénomène de marée (non soumis aux aléas climatique), nous pouvons admettre cette indépendance.
+A noter que 2 évènements espacés de plusieurs semaines seront indépendants.
+
+Concernant l'hypothèse d'équi-distribution, elle nous pourrions l'admettre si nous ne tenions pas compte du réchauffement climatique.
+Sur ce second point, les études scientifiques actuelles diverges localement, même si l'on se dirige vers consensus qui conclurait que le changement climatique, à nos latitudes, aurait peu d'influence sur le nombre de jours annuels avec des vents tempétueux.
+Si l'on se replace en 1953, date de l'étude, la question ne se posait pas et la notion de distribution identique pouvait être admise.
+
+Nous pouvons donc continuer, en supposant que le nombre de tempêtes sur une année est constant et égal à N, on cherche donc la valeur h telle que\
+$\mathbb{P}(\max_{i=1,\dots,N} X_{i} \gt h) = p$
+
+*NB : le nombre N n'est pas constant, il est possible de le traiter comme une v.a. et d'estimer sa distribution, puis sa moyenne (cas standard et non extrême).*
+
+En notant :
+
+-   $F(\frac{}{})$ la fonction de répartition commune aux $X_{i}$,
+
+-   et $M_{n}=\max(X_{1}, \dots, X_{n})$ on démontre que
+
+    $$ 
+    \begin{align} 
+    \mathbb{P}(M_{n} \le x) & = \mathbb{P}(\max_{i=1,\dots,N} X_{i} \le x) \\
+                            & = \mathbb{P}(X_{1} \le x, \dots, X_{n} \le x) \\
+                            & = \mathbb{P}(X_{1} \le x) \dots \mathbb{P}(X_{n} \le x) \\
+                            & = [F(x)]^{n}
+    \end{align}
+    $$ 
+
+-   Par conséquent on cherchera la hauteur *h* telle que :\
+    $$
+    \begin{align} 
+    \mathbb{P}(M_{n} \le h) = 1 - p & \Leftrightarrow F^{N}(h) = 1 - p \\
+    &\Leftrightarrow F(h) = (1-p)^{1/N}
+    \end{align}
+    $$
+
+N, le nombre moyen de tempête par an, étant inconnu on pourra le remplacer par son estimateur $\hat{N} = \frac{1877}{111}$
+
+Ainsi, si la fonction de répartition $F(\frac{}{})$ est inversible, la hauteur *h* recherchée est :\
+$h = F^{-1}\left((1-1)^{1/\hat{N}}\right)$
+
+La valeur *h* est donc le quantile d'ordre $1-\alpha$ avec $\alpha = 1 - (1-p)^{1/\hat{N}}$
+
+Dans l'exemple précédant, la valeur $\alpha$ est très proche de zéro, ce qui rend sont estimation complexe.
+La valeur *h* est un quantile extrême et son estimation va nécessiter d'extrapoler au-delà des observations.
+
+Alors que la statistique "classique" s'intéresse principalement à la partie dite centrale de la loi modélisant au mieux le phénomène considéré (calcul de l'espérance, la médiane, la variance, utilisation du théorème central limite, etc.), nous souhaitons ici étudier les "grandes" valeurs, c'est-à-dire la queue de distribution de la loi.
+
+La théorie des valeurs extrêmes propose un cadre théorique solide pour l'étude de ces valeurs dites extrêmes.
+La difficulté principale réside dans l'application concrète de la théorie (estimation, inférence, etc.) puisque par nature, un évènement extrême est très peu observé.
+
+## 2.2 Loi généralisée des valeurs extrêmes
+
+Prévoir certains évènements ou comportements, à partir d'une étude des valeurs extrêmes d'une série, est donc un des principaux objectifs pour ceux qui tentent d'appliquer la théorie à ces valeurs.
+Cette théorie est apparue entre 1920 et 1940, grâce à Fréchet, Fisher et Tippett, Gumbel et Gnedenko.
+Lorsque l'on modélise le maximum d'un ensemble de variables aléatoires, alors, sous certaines conditions, la distribution ne peut appartenir qu'à l'une des trois lois suivantes: Weibull (à support borné), Gumbel et Fréchet (à support non borné).
+Ces trois lois définissent une famille de distributions statistiques appelée "famille parétienne", dont les applications sont innombrables et très diverses.
+
+L'introduction de la TVE est devenue une exigence dans de nombreux domaines.
+En effet, les outils probabilistes traditionnels (développés dans un univers gaussien) sont inadaptés à l'appréhension de ces comportements extrêmes : la moyenne n'existe plus dans le nouvel univers des risques.
+La présence des extrêmes dans une population statistique rend donc caduque l'approche classique et nécessite une nouvelle approche, comme celle inventée par Pareto à la fin du XIX$^{ème}$ siècle.
+Pareto s'intéresse à la distribution des revenus dans une économie donnée.
+Il a constaté que les revenus se répartissent toujours selon une loi mathématique décroissante d'allure entre une petite minorité de riches, une classe moyenne minoritaire, et une large majorité de pauvres.
+Il a montré que plus que plus les revenus sont élevés, plus la queue de distribution des revenus sera hyperbolique.
+Cette forme d'hyperbole permet une modélisation précise de la queue de distribution des revenus, et donc permet de bien décrire l'impact des grands revenus sur le revenu moyen.
+
+En appliquant par exemple la TVE au marché pétrolier nous pouvons répondre aux types de questions suivantes : quelle est la probabilité d'occurrence d'un krach du type de celui de 1973 ou encore d'une baisse de 50 % en journée sur le brut, un mouvement n'ayant encore jamais été enregistré ?
+L'étude et la modélisation des ces extrêmes est d'importance capitale.
+En fait la performance d'un investisseur, d'une banque ou d'une entreprise sur une période donnée est souvent le fait de quelques journées exceptionnelles, la plupart des journées d'activité ne contribuant que marginalement au résultat.
+
+### 2.2.1 Contexte Général
+
+Reprenons les notations précédentes, soit $X_{1}, \dots, X_{n}$ une suite de variables aléatoires iid qui suivent une loi $F(\mu,\sigma^2)$.
+
+Dans le cadre classique de la TVE, nous nous intéresserons à la loi du maximum d'une suite de variables aléatoires réelles.
+Notons $M_{n}=\max(X_{1}, \dots, X_{n})$, comme vu précédemment :$$
+\tag{0}\begin{align} 
+\mathbb{P}(M_{n} \le x) & = \mathbb{P}(X_{1} \le x, \dots, X_{n} \le x) \\
+                        & = \mathbb{P}(X_{1} \le x) \dots \mathbb{P}(X_{n} \le x) \\
+                        & = [F(x)]^{n}
+\end{align}
+$$ Par conséquent :
+
+-   Si $F(x) \lt 1$, alors $\mathbb{P}(M_{n} \le x) \xrightarrow{} 0$ quand $n \xrightarrow{d} \infty$
+
+-   Si $x^{F}$ est le point extrémal de F, alors $M_{n} \xrightarrow{\mathbb{P}} x^{F}$ quand $n \xrightarrow{} \infty$, avec $x^{F} = \sup\{{x : F(x) \lt 1}\}$
+
+NB : la distribution de $M_{n}$ est dégénérée, cela implique qu'il faudra passer par une phase de transformation ou de normalisation.
+
+Le théorème de **Fisher-Tippett** (1928) est l'un des axes fondateurs de la TVE.
+
+**DEFINITION** : On dit que deux variables aléatoires réelles X et Y sont de même type s'il existe des constantes réelles $a \gt 0$ et $b \in \mathbb{R}$ tels que $Y = aX +b$ en loi, i.e. si *F* et *H* sont des lois respectives des variables *X* et *Y*, alors on a $F(ax+b) = H(x)$.
+
+Autrement dit, les variables "de même type" ont la même loi, à un facteur de localisation et d'échelle près.
+
+L'idée de Fisher et Tippett va consister, de façon analogue au théorème central limite, à trouver des constantes de normalisation : $a_{n}$ et $b_{n}$ avec $a_{n} \gt 0$ et $b_{n} \in \mathbb{R}$, ainsi qu'une loi non dégénérée de *H* tq :
+
+$\tag{1}\mathbb{P}\biggl\{\frac{M_{n}-b_{n}}{a_{n}} \le x \biggl\}=\big(F(a_{n}x+b_{n})\big)^{n} \xrightarrow{}H_{\gamma}(x)$
+
+**THÉORÈME** :
+
+S'il existe deux suites de constantes de normalisation avec $a_{n} \gt 0$ et $b_{n} \in \mathbb{R}$ et une loi non dégénérée de *H* tq $\frac{M_{n}-b_{n}}{a_{n}} \xrightarrow{loi}H_{\gamma}$, alors $H_{\gamma}$ est l'une des trois lois limites :
+
+-   distribution de Gumbel : $\Lambda(x)=exp\big(-exp(-x)\big), x \in \mathbb{R}$
+
+-   distribution de Fréchet : $\Phi_{\alpha}(x) = \begin{cases} exp(-x^{\alpha}) & \text{, si x }\gt 0\\ 0 & \text{, si x }\le 0\\ \end{cases}$
+
+-   distribution de Weibull : $\Psi_{\alpha}(x) = \begin{cases} exp(-(-x)^{\alpha}) & \text{, si x }\le 0\\ 1 & \text{, si x }\gt 0\\ \end{cases}$
+
+Ce théorème donne un résultat très intéressant : quelle que soit la loi limite de la variable parente, la loi limite des extrêmes a toujours la même forme.
+
+Ces résultats peuvent se simplifier pour obtenir la distribution Généralisée des Valeurs Extrêmes (GEV).
+Bien que le comportement des lois précédentes soit complètement différent, elles peuvent être combinées en une seule paramétrisation contenant un unique paramètre qui contrôle l'épaisseur de la queue de loi, appelé indice des valeurs extrêmes ou indice de queue.
+
+$H_{\gamma}(x) = \begin{cases} exp\Big(-(1+\gamma x)^{-\frac{1}{\gamma}}\Big) & \text{, si }\gamma \ne 0\\ exp\Big(-exp(-x)\Big) & \text{, si }\gamma = 0\\ \end{cases}$
+
+Avec $\gamma$ l'indice des valeurs extrêmes qui permet, selon son signe, d'identifier le domaine d'attraction de la distribution.
+
+$$
+\begin{cases}
+    \gamma \gt 0 & \text{Fréchet, distribution de type Pareto}\\
+    \gamma = 0 & \text{Gumbel, queue à décroissance exponentielle}\\
+    \gamma \lt 0 & \text{Weibull, X admet un point terminal fini}
+  \end{cases} 
+$$ 
+```{r densisty_ext, fig.cap="Densités des distributions extrêmes"}
+set.seed(123)
+# Generate Gumbel Random numbers
+x <- revd(10000,loc=0,scale=1,shape=0)
+plot(density(x), xlim = c(- 5, 5), ylim=c(0,1), 
+     xlab = "x", ylab = "densité", main = "")
+
+# Frechet distribution plot
+y <- revd(10000,loc=1,scale=0.7,shape=0.4)
+lines(density(y),col="red")
+
+## Weibull Distribution Plot 
+z <- revd(10000,loc=0,scale=1,shape=-1)
+lines(density(z),col="blue")
+
+legend(x = -5, y = 1, legend = c("Gumbel", "Frechet", "Weibull"),
+       lty = c(1, 1, 1), col = c("black", "red", "blue"), 
+       lwd = 2, box.lwd = NA)     
+```
+
+Nous pouvons introduire aux GEV les paramètres de localisation $\mu$ et de dispersion $\sigma$ dans la paramétrisation pour obtenir la forme généralisée de la GEV :
+
+$$
+H_{\gamma,\mu,\sigma}(x) = exp\Bigg(-\Big(1+\gamma\frac{x-\mu}{\sigma}\Big)^{-\frac{1}{\gamma}}\Bigg), \text{si }\gamma \ne 0 \text{ et } 1+\gamma\frac{x-\mu}{\sigma}>0
+$$
+
+Le théorème de Fisher-Tippett-Gnedenko fournit, en quelque sorte, la contrepartie du Théorème Central Limite (TCL) dans le cas d'événements extrêmes.
+Cependant, contrairement au TCL, où la loi normale est la seule loi limite possible, dans le cas des extrêmes, trois types de loi limite sont possibles.
+
+***Cela reste théorique, car cette convergence est possible sous condition d'observer un grand nombre de points, ce qui est souvent impossible dans la pratique.***
+
+**RAPPELS**:
+
+$X_{1}, \dots, X_{n}$ sont toujours des variables aléatoires iid, nous supposons de plus que $\mathbb{E}(X_{i}) = m, \mathbb{Var}(X_{i}) = \sigma^2 \lt \infty$ .
+
+Soit $\bar{X_{n}} = n^{-1} \sum_{i=1}^{n}X_{i}$ la moyenne empirique, la loi des grand nombre dit que : $\bar{X_{n}} \xrightarrow{\mathbb{P}} m$ quand $n \xrightarrow{} \infty$ , là encore nous sommes face à une loi dégénérée.
+
+Le TCL permet d'introduire une normalisation linéaire, tq pour $x$ fixé :
+
+$\mathbb{P}(\bar{X_{n}} \le \sigma_{n}x + m_{n}) \xrightarrow{} \Phi(x)$ quand $n \xrightarrow{} \infty$
+
+Avec $m_{n} = \mathbb{E}(\bar{X_{n}}) = \mathbb{E}(X_{1})$ et $\sigma_{n}x = \mathbb{Var}(\bar{X_{n}}) = n^{-1}\mathbb{Var}(X_{1})$ et $\Phi$ la fonction de distribution de la loi normale centrée et réduite.
+
+Tant que l'espérance est finie, la distribution limite est la même quelque soit $F$, la normalisation dépend des 2 premiers moments de $F$ (et sont donc estimables !) et le TCL suggère l'approximation suivante :
+
+$\bar{X_{n}} \sim \mathcal{N}(m, \frac{\sigma^2}{n})$ quand *n* est fini et suffisamment grand.
+
+Sans aller jusqu'à la preuve du Théorème de Fisher-Tippett, on retiendra qu'à partir de (0), on peut montrer que si $x_{F} := q(0) = inf\{x; F(x) = 1\}$, $X_{n} \xrightarrow{\mathbb{P}} x_{F}$ lorsque $n \rightarrow \infty$.
+Pour obtenir une convergence en loi il faudra donc, comme pour le TCL (cf. ci-dessus) normaliser le maximum.
+
+**A RETENIR**:
+
+Comme vu précédemment, la loi limite du maximum dépend donc du seul paramètre appelé **l'indice des valeurs extrêmes** $\gamma$.
+Selon le signe de $\gamma$ on définit trois types de domaines d'attraction : le domaine d'attraction de Fréchet lorsque $\gamma \gt 0$; de Weibull lorsque $\gamma \lt 0$ et de Gumbel lorsque $\gamma = 0$.
+Le tableau suivant regroupe quelques lois usuelles classées en fonction de leur domaine d'attraction.
+
+    |  Gumbel | Fréchet | Weibull |
+    |    =0   |    >0   |    <0   |
+    |---------|---------|---------|
+    | Normale | Pareto  | Uniforme|
+    |  Expo   |Log-gamma|   Beta  |
+    | Log-Norm| Student |Puissance|
+    |  Gamma  |  Cauchy |         |
+    | Weibull |         |         |
+
+Le paramètre $\gamma$ est une paramètre de forme.
+Il contrôle la forme de la queue de distribution.
+
+1.  Si $\gamma \gt 0$, la fonction de survie $1-F(x)$ converge vers 0 lorsque $x \rightarrow x^{*}_{F}=+\infty$.
+    Ce domaine d'attraction regroupe les distributions leptokurtiques ou *heavy-tailed*, à queue "lourde".
+
+2.  Si $\gamma = 0$, on parle de distribution à queue fine, *light-tailed*, qui va regrouper les distributions platykurtiques et mésokurtiques.
+    Nous ne définirons pas dans ce cours le Kurtosis, ni ses effets.
+
+3.  Enfin, si $\gamma \lt 0$, on retrouvera les distributions ayant un point terminal fini, donc un maximum.
+
+Ce cours ne traitera pas des domaines d'attraction, sujet qui a certainement déjà été abordé au cours de la scolarité passée.
+On retiendra l'idée générale qui consiste à identifier la ou les familles de lois selon laquelle une variable aléatoire est distribuée en analysant graphiquement au choix le QQ-plot, la *Mean-Excess function*, ...).
+Des exemples seront présentés dans la mise en pratique.
+
+### 2.2.2 Analyses dans un cadre dynamique
+
+Dans cette partie, nous nous intéresserons à des séries temporelles.
+Dans ce contexte, les extrêmes peuvent être très différents de ceux d'une variable aléatoire iid, comme étudié précédemment.
+
+La dépendance temporelle peut non seulement affecter l'amplitude des extrêmes mais aussi leur dynamique.
+En effet, les évènements de grande ampleur sont souvent regroupés en groupe, en climatologie/météorologie on parle de *clusters*, ce terme est également utilisé en statistiques.
+
+Soit $X_{1},X_{2}, \dots$ une série strictement stationnaire, i.e. pour tous entiers $h \ge 0$ et $n \ge 1$, la distribution du vecteur $(X_{h+1}, …,X_{h+n})$ ne dépend pas de h.
+On note $F$ la distribution stationnaire d'un $X_{i}$.
+
+Soit $\tilde{X_{1}}, \tilde{X_{2}}, \dots$ la série associée de variables aléatoires iid de distribution $F$.
+
+Par similarité à la partie précédente, en posant $M_{n} = \max_{i=1,\dots,n} X_{i}$, nous recherchons une distribution limite de $\frac{M_{n}-b_{n}}{a_{n}}$ pour des choix judicieux des constantes $a_{n} \gt 0$ et $b_{n}$.
+Nous avons vu précédemment que les seules limites possibles étaient des distribution GEV, cela reste vrai pour les séries temporelles strictement stationnaires.
+
+La distribution limite $\tilde{M_{n}} = \max_{i=1,\dots,n} \tilde{X_{i}}$ diffère, cela vient de l'indice extrémal que nous noterons $\theta$ et qui mesure l'intensité avec laquelle les extrêmes se regroupent dans le temps.
+
+Nous n'entrerons pas dans les détails, nous noterons toutefois qu'il a été établi que 2 évènements deviennent asymptotiquement indépendants avec l'augmentation de $n$ et pour une distance (temporelle) établie entre l'ensemble des indices.
+
+Sauf si l'indice extrémal $\theta$ est égal à un, les distributions limites sont différentes pour la série stationnaire et la série associée.
+
+Nous retiendrons que, si $\theta \gt 0$, $u_{n} (\tau) = a_{n}x + b_{n}$, où $\tau = (−\ln{G(x)})$ et $G$ a une distribution GEV de paramètres $(\mu, \sigma, \gamma)$, alors
+
+$$
+\mathbb{P}\Big(\frac{M_{n}-b_{n}}{a_{n}}\le x\Big) \rightarrow G^*(x)
+$$
+
+où $G^{*}$ a une distribution GEV de paramètre $(\mu^{*}, \sigma^{*}, \gamma^{*})$ caractérisé par
+
+$$
+\begin{array}\\
+\gamma = \gamma^{*},& \sigma = \sigma^{*}\theta^{\gamma},& \mu = \mu^{*}-\sigma^{*}\frac{1-\theta^{\gamma}}{\gamma}
+\end{array}
+$$
+Le paramètre de forme de la GEV n'est donc pas modifié, toutefois pour passer d'un modèle inféré sur un échantillon à la distribution globale, nous devrons réaliser une transformation.
+
+Bien que ces travaux fasse intégralement parti du travail attendu en entreprise d'un statisticien se spécialisant sur les risques climatiques, nous n'aborderons pas comment estimer ce paramètre $\theta$.
+De plus, la stationnarité d'une série temporelle n'étant pas toujours observées, nous n'aborderons pas les méthodes existantes qui permettent de se repositionner dans un cadre stationnaire.
+
+**Toutes ces étapes sont attendues dans une études.**
+
+## 2.3 P.O.T. - Excès au-delà d'un seuil
+
+Pour traiter les valeurs extrêmes, en dehors de l'étude des maximum, une autre méthode est régulièrement utilisée, il s'agit de la méthode des excès au-delà d'un seuil, ou *Peak Over Threshold*.
+Cette méthode repose sur le comportement des valeurs observées au-delà d'un seuil donné.
+En d'autres termes, elle consiste à observer non pas le maximum ou les plus grandes valeurs mais toutes les valeurs des réalisations qui excèdent un certain seuil élevé.
+L'idée de base de cette approche consiste à choisir un seuil suffisamment élevé et à étudier les excès au-delà de ce seuil.
+Cette méthode initialement développée par Pickands (1975), puis elle a été fortement étudiée depuis (cf. références en fin de cours).
+
+Plutôt que de considérer le maximum $M_{n}$ d'un échantillon $X_{1}, \dots, X_{n}$ , on s'intéresse aux $N_{n} = \sum_{i=1}^{n}\mathbb{I}_{\{X_{i}\gt u_{n}\}}$ dépassements du seuil $u_{n}$, c'est-à-dire aux observations $Y_{i} = \big(X_{i}-u_{n}\big)_{+}$ qui sont strictement positives.
+Où $N_{n}$ est le nombre de dépassement du seuil u par les $(X_{i})_{1\le i \le n}$ et $Y_{1}, \dots, Y_{n}$ les excès correspondants.
+
+On cherche, à partir de la loi $F(X)$ à définir une loi conditionnelle $F_{u}$ par rapport au seuil $u_{n}$ pour les variables aléatoires dépassant ce seuil.
+
+A l'aide du théorème de Bayes, on peut définir la loi conditionnelle $F_{u}$ par :
+
+$$
+\begin{align}
+F_{u}(y) & = \mathbb{P}(X - u_{n} \le y | X \gt u_{n}) \\
+         & = \frac{F(u_{n} + y) - F(u_{n})}{1-F(u_{n})}\text{ , }y \ge 0
+\end{align}
+$$
+
+Avant de voir le théorème de Pickands, voyons la définition de la loi de Pareto Généralisée (GPD).
+
+Le théorème de Pickands-Balkema-de Haan donne la forme de la loi limite pour les valeurs extrêmes.
+
+**THÉORÈME** :
+
+Une fonction de répartition $F$ appartient au domaine d'attraction maximale de $H_{\gamma}$, si et seulement si, il existe une fonction positive $\beta(u)$ telle que
+
+$$
+\displaystyle \lim_{u \to x_{F}} \sup_{0\le y\le x_{F}-u} \Big|F_{u}(y)-G_{\gamma,\beta(u)}(y)\Big|
+$$
+
+où $F_{u}(y)$ est la fonction de répartition conditionnelle des excès pour $u$ "élevé", $x_{F}$ est le point terminal de F, $x_{F} = \{x\in \mathbb{R}:F(x)\lt1 \}$ et $G_{\gamma,\beta(u)}(y)$ est la loi de Pareto Généralisée (GPD).
+
+$$
+\tag{2}
+G_{\gamma,\beta(u)}(y) = \begin{cases} 
+    1-\Big(1+\gamma\frac{y}{\beta(u)})^{-\frac{1}{\gamma}}\Big) & \text{, si }\gamma \ne 0\\
+    1-exp\Big(-\frac{y}{\beta(u)}\Big) & \text{, si }\gamma = 0\\ \end{cases}
+$$
+
+avec $y \ge0$ pour $\gamma \ge0$ et $0 \ge y \ge -\frac{\beta(u)}{\gamma}$ pour $\gamma \lt 0$
+
+Ce théorème montre l'existence d'une relation étroite entre la GPD et la GEV.
+Pickands a montré que pour n'importe quelle loi F, l'approximation GPD n'est vérifiée que s'il existe des constantes de normalisation et une loi non dégénérée telle que le résultat donné par (1) est vérifié.
+Dans ce cas, si H est écrite sous la forme d'une GEV, alors l'indice de queue $\gamma$ est le même que celui de la GPD (2).
+
+Dans la pratique, le choix du seuil peut constituer une difficulté.
+Nous n'étudierons pas dans ce cours les méthodes de choix de seuil.
+La plupart sont non paramétriques et itératives car il existe plusieurs seuils possible au sein d'une série de données.
+Il arrivera parfois que vos données soient tronquées, on pourra donc tester le seuil de troncature.
+
+**Quelques propriétés des GPD**
+
+-   Si $\gamma = -1$, alors $G_{-1,\beta}^{p}$ est la loi uniforme sur $[0,\beta]$ ;
+
+-   Si $\gamma = 0$, alors $G_{0,\beta}^{p}$ est la loi exponentielle de paramètre $\frac{1}{\beta}$ ;
+
+-   La densité de $G_{\gamma,\beta}^{p}$ est données par $f(x) = \frac{1}{\beta}\Bigg[1+\gamma\Big(\frac{x}{\beta}\Big)\Bigg]_{+}^{-(1+\frac{1}{\gamma})}$ ;
+
+-   Si $U \sim U[0,1]$, alors $Y \sim \beta\Big(\frac{U^{-\gamma}-1}{\gamma}\Big)$ a une loi GPD($\beta,\gamma$) ;
+
+-   Si $X \sim$ GPD($\beta,\gamma$) et $\gamma \lt 1$ alors $\mathbb{E}(X) = \frac{\beta}{1-\gamma}$ ;
+
+-   Si $X \sim$ GPD($\beta,\gamma$), alors $(X-x | X \gt x) \sim$ GPD($\beta+\gamma x,\gamma$) et $\mathbb{E}(X-x | X\gt x) = \frac{\beta+\gamma x}{1-\gamma}$.
+
+La dernière propriété est intéressante, puisqu'elle nous permet de dire que dès lors qu'un seuil est fixé et que les paramètres de la fonction $F$ y auront été défini, il existera une translation permettant d'établir la loi $F^{1}$ pour un autre seuil ou de définir $F^{2}$ la fonction non seuillée.
+
+Les démonstrations ne seront pas faites en cours.
+Je vous invite à vous reporter aux référence en fin documents pour approfondir le sujet.
+
+Tout comme pour l'approche des maximums, il est possible d'appliquer la méthode POT à une série temporelle.
+On parlera de processus ponctuel de dépassement de seuil.
+On retrouvera l'indice extrémal $\theta$ et des théorèmes permettant de qualifier la distribution des *clusters*.
+Des travaux sont actuellement en cours sur ces sujets afférents notamment aux pertes économiques liées à des évènements climatiques.
+Cette introduction n'a pas vocation à les énumérer.
+
+## 2.4 Extrêmes multivariés
+
+A titre informatif, les distributions des extrêmes multivariées naissent des lois jointes limites des maxima par composante normalisés.
+Contrairement au cas univarié, il n'existe pas de familles paramétriques naturelles pour caractériser les distributions des extrêmes multivariées G.
+
+Sans entrer dans le détail, il s'agit ici d'étudier des extrêmes conjoints.
+
+En climatique nous pouvons citer la submersion marine, comme évoqué en introduction de la GEV aux Pays-Bas.
+En effet un fort coefficient de marée, dont l'apogée se produirait en même temps que le passage d'une tempête extrême pourrait entraîner des hauteurs d'eau non imaginées.
+
+En cat-modeling, soit l'art de modéliser à la fois les aléas sources de catastrophes naturelles et les pertes économiques liées, on peut aussi croiser l'aléa à l'exposition.
+Par exemple, étudier la probabilité d'un évènement de pluie extrême et le croiser avec les enjeux assurés.
+Un même orage, qui entraînerait des pluies de 300mm dans une zone de quelques km² aurait certainement la même probabilité de survenance.
+Toutefois les pertes associées à ce même évènement touchant une zone inhabité et celles associées à une zone densément peuplée ne seront pas les mêmes.
+
+**C'est l'enjeu principal du cat-modeling !** Nous y reviendrons dans le cours.
+
+# 3 - La pratique
+
+Dans la pratique, plusieurs étapes préalables sont parfois nécessaires avant de tenter d'inférer les paramètre d'une loi extrêmes.
+Nous avons vu lors du cours n°2 et du TP sur la géomatique, que la préparation des données spatiales et la sélection des données dans une zones "à risques" était nécessaire avant de réaliser toute analyse statistiques de la situation.
+
+*Nous repartirons des données de ce TP de géomatique pour la suite du cours.*
+
+Parmi les étapes préliminaire, outre les statistiques descriptives qui permettent d'avoir une première impression sur les distributions usuelles et sur les données utilisées (présence de donnée non-homogènes dans le temps...), la recherche de seuil peut s'avérer délicate en TVE.
+
+Le seuil $u$ doit être assez grand pour que l'approximation GPD soit valide, mais pas trop élevé pour garder un nombre suffisant de dépassements et donc estimer les paramètres du modèle correctement.
+Le seuil doit être choisi de façon à faire un arbitrage, traditionnel en statistiques, entre le biais et la variance.
+Généralement, $u$ est déterminé graphiquement en exploitant la linéarité de la fonction d'excès moyenne $e(u)$ pour la GPD.
+Cette technique fournit une aide précieuse, cependant, il ne faut pas attendre d'elle la bonne valeur de $u$.
+En pratique, plusieurs valeurs de $u$ doivent être testées.
+Ce problème du choix a suscité de nombreux travaux dans la littérature, parmi lesquels certains se réfère à l'estimateur de Hill de l'indice de queue, d'autres utilisent des approches par Bootstrap pour trouver le seuil optimal, ou encore certaines approches consistent à choisir un seuil aléatoire, de manière itérative, jusqu'à optimisation d'un critère de qualité du seuil (ou de stabilité des paramètres de la loi...).
+
+Dans cette partie, nous travaillerons à la fois sur l'estimation de lois extrêmes, tout d'abord nous analyserons quelques QQ-plot et *Mean-Excess plot* afin de reconnaître le domaine d'attraction.
+Puis, en fonction des cas de figure, nous choisirons aussi bien la distribution et estimerons ses "bons" paramètre.
+Enfin nous travaillerons à l'estimation des quantiles extrêmes, but principal dans la modélisation économique des pertes engendrées par les évènement climatiques (ou dans la modélisation des évènements).
+
+## 3.1 Approche graphique
+
+On rappellera qu'il est obligatoire d'examiner les données au préalable de toute analyse statistique détaillée.
+L'approche la plus simple consistera donc à une exploration graphique de ces données.
+
+### 3.1.1 QQ Plots ou graphique Quantiles-Quantiles
+
+Il s'agit ici de tracer la distribution des quantiles de nos données et de les comparer aux quantiles d'une distribution prédéfinie.
+Si les 2 distributions sont voisines, la figure obtenue sera proche de la droite.
+De plus, ce type de graphique nous permet d'identifier si la distribution analysée se comporte différemment sur les queues de distribution.
+
+Pour l'aspect théorique, posons $X_{(1)} \ge \dots \ge X_{(n)}$ la statistique d'ordre associée à notre échantillon $X_{1}, \dots, X_{n}$ v.a.
+iid de distribution $F$.
+Si $F$ est continue, alors les variables aléatoires $U_{i}= F(X_{i})$ sont iid et de loi uniforme sur (0, 1).
+De plus
+
+$$
+\begin{align}
+& \Big(F\big(X_{(i)}\big) \Big)_{i=1,\dots,n} \overset{d}{=} \big(U_{(i)}\big)_{i=1,\dots,n}\\
+& \leftrightarrow \big(X_{(i)}\big)_{i=1,\dots,n} \overset{d}{=} \Big(F^{-1}\big(U_{(i)}\big) \Big)_{i=1,\dots,n}
+\end{align}
+$$
+
+Le graphique $\big\{X_{(i)} , F^{-1}(1-i/n):i=1,\dots,n\big\}$ est appelé graphique quantiles-quantiles ou QQ-plot.
+
+```{r qq_plot_1}
+set.seed(123)
+# Generate Normal Random numbers
+norm <- rnorm(10000)
+qqnorm(norm)
+# Generate Exponential Random numbers
+expo <- rexp(10000, rate = 1)
+qqnorm(expo)
+# Generate Exponential Random numbers
+unif <- runif(10000)
+qqnorm(unif)
+# Generate lognormal Random numbers
+lnorm <- rlnorm(10000)
+qqnorm(lnorm)
+```
+
+```{r qq_plot_2}
+set.seed(123)
+# new ref : exponential
+ref <- rexp(10000, rate = 1)
+qqplot(expo, ref)
+qqplot(unif, ref)
+qqplot(lnorm, ref)
+```
+
+```{rqq_plot_3}
+
+qqplot(x, x)
+qqplot(y, x)
+qqplot(z, x)
+
+```
+
+*Comparaison des distributions empirique et théorique*
+
+Comme évoqué au préalable, si les données ont été générées à partir d'un échantillon aléatoire de la distribution de référence, la courbe devrait être à peu près linéaire.
+Cela reste vrai si les données proviennent d'une transformation linéaire de la distribution (dans ce cas, il est possible de déterminer les coefficients de la transformation linéaire à partir de la pente et de l'ordonnée à l'origine de la droite observée).
+
+*Queues de distribution*
+
+De plus, les formes des queues de distribution peuvent être déduites de la courbe.
+Ainsi, si la distribution de référence a des queues plus (ou moins) épaisses, la courbe aura tendance à s'incurver vers le bas (respectivement en haut) à gauche et/ou vers le haut (respectivement en bas) à droite.
+
+### 3.1.2 Mean Excess plot ou fonction de dépassement moyen
+
+C'est un second outil graphique très utilisés pour étudier les distributions extrêmes.
+La fonction de dépassement moyen est définie par :
+
+$$
+e(u) = \mathbb{E}(X-u|X>u)
+$$
+
+D'un point de vue propre à l'assurance, ce type de graphique peut avoir diverses fonction, notamment sur le calcul des traités de réassurance.
+
+Empiriquement, nous traçons donc le graphique $\{u,\tilde{e}(u)\}$ avec $\tilde{e}(u)=\frac{\sum X_{i}\mathbb{I}_{X_{i\gt u}}}{\sum\mathbb{I}_{X_{i\gt u}}}$
+
+```{r mean_excess}
+
+fExtremes::mePlot(x, subtitle = "distribution de X : DA Gumbel")
+fExtremes::mePlot(y, subtitle = "distribution de Y : DA Fréchet")
+fExtremes::mePlot(z, subtitle = "distribution de X : DA Weibull")
+```
+
+### 3.1.3 Graphique de Hill ou Hill plot
+
+## 3.2 Estimation des paramètres
+
+Cette partie sera abordée en TP, l'objet ici consiste dons à poser des hypothèses afin de définir la bonne loi et inférer ses paramètres.
+
+Bien que non abordé en cours, il existe différentes méthodes, détaillées dans les liens en référence, pour estimer les paramètres des lois extrêmes.
+On notera que l'une des étapes consistera à estimer l'indice des valeurs extrêmes $\gamma$.
+Pour cela nous disposons des travaux de Hill, notamment le Hill plot vu précédemment, qui vont permettre d'obtenir un estimateur $\hat \gamma$.
+
+Afin d'estimer les autres paramètres,il existe différentes méthodes.
+On pourra retenir les principales, soit par Maximum de vraisemblance, ou encore la méthode des moments pondérés ou la méthode des moments pondérés généralisées.
+Il est possible que certaines méthodes ne fonctionne pas selon vos données, il faut donc en tester plusieurs et contrôler que les paramètres sont cohérents.
+
+## 3.3 Quantiles extrêmes
+
+Enfin, une fois les paramètres identifiés et retransformés au besoin, nous nous intéresserons aux quantiles extrêmes ou période de retour.
+
+On s'attardera au préalable sur deux notions importantes en économie, la *Value at Risk* (VaR) et la *Tail Value at Risk* (TVaR).
+
+### 3.3.1 Value at Risk
+
+*Soit* $X$ *une variable aléatoire réelle de fonction de répartition* $F$ *et soit* $\alpha \in [0, 1]$ .
+*La Value at Risk de* $X$ *au niveau* $\alpha$ *st donnée par :*
+
+$$
+VaR_{\alpha}(X) := F^{\leftarrow{}}(1-\alpha)
+$$
+
+La Value at Risk de niveau $\alpha$ n'est donc rien d'autre que le quantile d'ordre $\alpha$.
+Généralement, $X$ est une variable aléatoire modélisant un risque pour la compagnie d'assurance (par exemple, le niveau d'eau d'une rivière, etc.) et la Value at Risk représente donc un seuil du risque ayant une probabilité $\alpha$ d'être dépassé.
+Cependant, bien que très utilisée, la Value at Risk ne donne aucune information sur ce qui se passe lorsque ce seuil est dépassé.
+On peut par exemple avoir deux variables aléatoires $X$ et $Y$ ayant une même valeur de la Value at Risk au niveau $\alpha$ mais présentant des queues de distribution très différentes.
+
+Pour remédier à ce problème, une autre mesure de risque a été proposée : la "Tail Value at Risk (TVaR)".
+
+### 3.3.2 Tail Value at Risk ou Conditional Tail Expectation
+
+*Soit* $X$ *une variable aléatoire réelle de fonction de répartition* $F$ *et soit* $\alpha \in [0, 1]$.
+*La Tail Value at Risk de X au niveau* $\alpha$ *est donnée par :*$$
+TVaR_{\alpha}(X) = \frac{1}{\alpha}\int_{0}^{\alpha}VaR_{s}(X)ds
+$$
+
+*si cette intégrale existe.*
+
+La Tail Value at Risk de niveau $\alpha$ est donc la moyenne des Value at Risk de niveaux inférieurs à $\alpha$ .
+Ceci permet d'avoir de l'information sur la queue de distribution au delà du niveau $\alpha$ .
+
+On peut également écriture la Tail Value at Risk, dans le cas d'une fonction de répartition dérivable presque-partout, comme suit.
+
+*Soit* $X$ *une variable aléatoire intégrable, de fonction de répartition* $F$ *continue et dérivable presque-partout. On a alors :*$$
+\begin{align}
+TVaR_{\alpha}(X) & = \frac{1}{\alpha}\mathbb{E}(X\mathbb{I}\{X\ge VaR_{\alpha}(X)\} \\
+                 & = \mathbb{E}(X|X\ge VaR_{\alpha}(X))
+\end{align}
+$$
+
+Ce résultat a permis de définir une autre mesure de risque : la "Conditional Tail Expectation" ou CTE définie pour une variable aléatoire $X$ quelconque par
+
+$$
+CTE_{\alpha}(X):=\mathbb{E}(X|X\ge VaR_{\alpha}(X))
+$$
+
+Cette mesure donne la valeur moyenne du risque $X$ sachant que l'on a dépassé le seuil $VaR_{\alpha}(X)$.
+
+En conclusion, les mesures de risque en assurance sont intimement liées à la notion de quantile.
+Lorsque le niveau de risque $\alpha$ est proche de zéro, l'estimation des mesures de risque passe donc par la théorie des valeurs extrêmes.
+
+### 3.3.3 Estimation des quantile
+
+Cette partie sera également abordée en TP.
+Une fois la distribution extrême établie et ajustée, nous travaillerons à estimer les quantiles extrême.
+
+A noter que cela peut se faire loin des plus fortes observations.
+
+
+
+# 4 - Statistiques et étude de la période de retour
+
+L'objectif final est d'établir une période de retour, soit l'inverse de la probabilité de survenance d'un évènement.
+Si l'on s'attarde sur la vitesse du vent, la première étape serait donc de tenter de modéliser la distribution de la vitesse du vent à partir des 174 points disponibles.
+Méfiance toutefois avec cette approche, si plusieurs évènements ont lieu certaines années, l'objectif étant de mesurer plutôt un vent maximal annuel, il faudra retravailler les données.
+Sur cette même idée, si nous n'avons pas de mesure sur une (ou plusieurs) année(s), notre série est tronquée, cela pourra soit être compensé par l'ajout de donnée (à 0?) soit par l'application de la troncature adéquate lors de l'ajustement de la loi.
+
+
+```{r units}
+load("./data/DT_HU_Antilles.Rdata")
+# Rappel sur les unités :
+unites <- data.table(valid_udunits())
+
+# unites[grepl("knot",unites\$name_singular)]
+# unites[grepl("nautic",unites\$name_singular)]
+# 1 noeud vaut donc 1852m / heure ou 1.852 km/h
+
+max(DT$Wind) * 1.852
+
+```
+
+1 noeud vaut donc 1852m / heure ou 1.852 km/h et la vitesse maximale mesurée à l'approche des côtes était de 287 km/h en vent moyen...
+
+### 4.1 - Analyse graphique
+
+```{r TP4.1, echo=FALSE, message=FALSE, warning=FALSE}
+
+DT[,list(N_systeme = length(Key)), by = list(Categ)]
+
+# 4.1.1 - Analyse par catégorie (intensité)
+
+DT$Year <- year(DT$DateTime)
+
+ggplot(DT[, list(N = length(Key)), by = list(Year,Categ)],
+aes(fill=factor(Categ,levels=c("Other", "Tropical Depression", "Tropical Storm","Hurricane")), y=N, x=Year)) +
+geom_bar(position='stack', stat='identity') +
+labs(x='Année', y='Systèmes', title='Système par an et par catégorie') +
+scale_fill_manual('Categ', values=c('gray','yellow','orange','red')) +
+theme_classic()
+
+# 4.1.2 - Analyse bivariée
+plot_ly(data = DT, type = "scatter",
+        mode = "markers",
+        x = ~Pressure, y = ~Wind,
+        color = ~intensity, symbol = ~Status)
+
+# 4.1.3 - grahe extrêmes
+DT$Wind_km <- DT$Wind * 1.852
+
+# Distribution Empirique : 
+fExtremes::emdPlot(DT$Wind_km)
+# Une ligne droite sur une échelle double log indique un comportement de la queue de type Pareto
+
+# QQ Pareto Plot : le paramètre xi correspond au gamma du cours 
+# xi = 0 : exponentielle
+fExtremes::qqparetoPlot(DT$Wind_km)
+# xi != 0 : GPD avec paramètre xi
+fExtremes::qqparetoPlot(DT$Wind_km, 0.2)
+fExtremes::qqparetoPlot(DT$Wind_km, -0.2)
+# A priori : xi < 0 !!
+
+
+# Mean Excess Plot :
+fExtremes::mePlot(DT$Wind_km)
+# la librairie propose des fonction alternatives, à tester (bien comprendre ce qu'elles font !)
+
+# Le ration Maximum / Somme  
+fExtremes::msratioPlot(DT$Wind_km)
+# Permet d'identifier la présence de queues lourdes
+# Une augmentation brutale de la courbe indique une tendance leptokurtique
+
+# Graphique de développement : 
+fExtremes::recordsPlot(DT$Wind_km,ci = 0.95)
+# Permet de s'assurer d'une distribution iid
+
+# Hill Plot : 
+evir::hill(DT$Wind_km)
+# recherche de l'indice de queue (en fonction du seuil)
+evir::shape(DT$Wind_km)
+# Sensibilité d'un quantile extrême en fonction du seuil
+evir::quant(DT$Wind_km, 0.999)
+```
+
+On voit bien que certaines années aucun système ne traverse la zone.
+De plus, les *Dépressions Tropicales* ne sont répertoriées, au mieux, qu'à partir des année 1930, et les évènements *autres* à partir des années 2000...  
+
+Par conséquent, notre historique n'est pas complet, nous pouvons soit réaliser notre modèle à partir des années 2000 (attention peu de profondeur) soit retirer les petits évènements, notre loi sera donc tronquée à gauche.  
+
+Une alternative consisterait à tenter de modéliser un max annuel et ne retenir pour chaque année 1 seul évènement.
+Dans cette hypothèse, les années sans évènement, la vitesse maximale du vent retenue sera de 30 noeuds (soit 55 km/h).
+
+Cette méthode ne colle donc pas avec le cours...
+Nous partirons donc sur une approche POT pour rester cohérent.
+
+### 4.2 - Alternative "Simple"
+
+Dans cette section nous allons établir une série temporelle contenant l'évènement annuel ayant les caractéristiques de vitesse de l'évènement le plus fort.
+Pour les années sans évènement nous modéliserons notre loi en partant du principe que nous observons des données tronquées (seuil 35 nœuds).
+
+```{r TP4.2.1}
+
+# Base de Vent max par an depuis 1851
+
+DT2 <- DT[,list(Wind = max(Wind)), by = Year]
+
+# Distribution de la vitesse du vent max annuel
+
+descdist(DT2$Wind, boot = 100)
+maxi <- max(DT2$Wind, 180)
+mini <- min(DT2$Wind, 0)
+
+xscaled <- (DT2$Wind-mini)/maxi
+fit.beta <- fitdist(xscaled, "beta", method = "mse")
+plot(fit.beta); title("BETA")
+summary(fit.beta)
+
+fit.gev <- extRemes::fevd(DT2$Wind,type="GEV",threshold=35)
+plot(fit.gev); title("GEV")
+summary(fit.gev)
+
+fit.gpd <- extRemes::fevd(DT2$Wind,type="GP",threshold=35)
+plot(fit.gpd); title("GPD")
+summary(fit.gpd)
+
+```
+
+Le choix de la loi à retenir s'effectue entre la loi Beta, une GEV et la Distribution de Pareto Généralisée avec un seuil de 35 nœuds.
+
+```{r TP4.2.2}
+
+ReturnPeriod <- data.table(rbind(
+
+data.frame(law = "Beta", PdR_100ans = round(maxi * qbeta(p = 0.99, fit.beta$estimate[1], fit.beta$estimate[2]) + mini, digits = 1),
+
+PdR_200ans = round(maxi * qbeta(p = 0.995, fit.beta$estimate[1], fit.beta$estimate[2]) + mini, digits = 1),
+
+PdR_max = round(1 / (1 - pbeta(q = (max(DT$Wind)-mini)/maxi, fit.beta$estimate[1], fit.beta$estimate[2])), digits = 0),
+
+PdR_cat4 = round(1 / (1 - pbeta(q = (113-mini)/maxi, fit.beta$estimate[1], fit.beta$estimate[2])), digits = 0),
+
+PdR_cat5 = round(1 / (1 - pbeta(q = (137-mini)/maxi, fit.beta$estimate[1], fit.beta$estimate[2])), digits = 0)),
+
+data.frame(law = "GEV", PdR_100ans = round(fExtremes::qgev(0.99, mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])[1], digits = 1),
+
+PdR_200ans = round(fExtremes::qgev(0.995, mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])[1], digits = 1),
+
+PdR_max = round(1 / (1 - fExtremes::pgev(max(DT$Wind), mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])),digits = 0),
+
+PdR_cat4 = round(1 / (1 - fExtremes::pgev(113, mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])),digits = 0),
+
+PdR_cat5 = round(1 / (1 - fExtremes::pgev(137, mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])),digits = 0)),
+
+data.frame(law = "GPD", PdR_100ans = round(evd::qgpd(0.99, loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2]), digits = 1),
+
+PdR_200ans = round(evd::qgpd(0.995, loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2]), digits = 1),
+
+PdR_max = round(1 / (1 - evd::pgpd(max(DT$Wind), loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2])),digits = 0),
+
+PdR_cat4 = round(1 / (1 - evd::pgpd(113, loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2])),digits = 0),
+
+PdR_cat5 = round(1 / (1 - evd::pgpd(137, loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2])),digits = 0))))
+
+kable(ReturnPeriod)
+
+```
+
+A l'étude des courbes, la GPD a un inconvénient majeur, elle a du mal à excéder la vitesse maximale observée... Les autres méthodes permettent de calculer des périodes de retour pour des évènements de catégorie 4 et 5, tout comment les vents observables tous les 100 ou 200 ans...
+
+ÃÂtant donné que l'on a parfois observé plusieurs évènements d'une intensité forte la même année, évènement n'étant pas le plus fort de l'année mais largement plus fort que les évènements d'autres années, il convient de rester prudent sur cette première approche.
+Elle permet toutefois de proposer une première réponse à la question du TP.
+
+Si l'on croise ces résultats avec d'autres études, notamment celle réalisée en 2020 par la CCR, on aurait tendance à retenir la GEV, même si cette dernière semble avoir des périodes de retour plus faibles que celle de l'étude de référence.
+De plus, les vents annoncés pour des périodes de retour de 100 ans ou 200 ans sont supérieurs à toutes les vitesses enregistrée dans la base complète (Atlantic : Vmax = 165 kn = 305 km/h).
+
+### 4.3 - Approche plus complète
+
+Prenons le temps d'étudier l'intégralité des données et non plus le maximum annuel.
+
+```{r TP4.3.1}
+
+# Densité de tout le set
+
+ggplot(DT, aes(x = Wind)) + geom_density() + theme_classic()
+
+# Densité de tout le set en fonction de l'intensité (non exploitable)
+
+ggplot(DT, aes(x = Wind)) +
+
+geom_density(aes(color = Categ) ) + theme_classic()
+
+# Sélection des évènements à partir de l'année 2000 (set comparable)
+
+ggplot(DT[Year >= 2000], aes(x = Wind)) + geom_density() + theme_classic() +
+
+labs(title='Post 2000 - périmètre comparable')
+
+# Sélection des évènements de type Tropical Storm ou Hurricane (set comparable)
+
+ggplot(DT[Categ %in% c("Tropical Storm","Hurricane")], aes(x = Wind)) + geom_density() + theme_classic() +
+
+labs(title='Tropical Storm & Hurricane')
+
+```
+
+Nous rappellerons qu'en 4.1 nous avons identifié que l'historique ancien n'était pas à périmètre identique de l'historique récent.
+Ces graphiques montrent le lien immédiat entre la catégorie (fonction du vent) et la vitesse du vent.
+Concernant les données récentes, la distribution s'écarte assez fortement de la distribution complète (et tronquées), ce qui semble moins le cas de la distribution des évènements "majeurs" (type "Tropical Storm" **TS** et "Hurricane" **HU**).
+
+**L'idée ici serait de construire une approche Bayésienne du système.**
+
+La difficulté de l'exercice est de mettre sous forme d'équation notre problématique.\\
+
+Posons X la vitesse de vent maximale au passage dans la zone de danger et Y la catégorie de l'évènement.
+
+$P(X\|Y)=\\frac{P(Y\|X).P(X)}{P(Y)}$
+
+Nous pouvons donc à ajuster $P(X \\ge x\|Y=y)$ la probabilité que X dépasse x noeuds, sachant que les évènements sont de type Tempête Tropicale ou Ouragan.\\
+
+Nous cherchons cependant à ajuster $P(X\\ge x)$ quelle que soit la catégorie y de Y...\\
+
+La probabilité $P(Y=y)$ peut s'ajuster sur un set plus récent et complet et se traduire comme la probabilité qu'un évènement depuis 2000 soit de type Tempête Tropicale ou Ouragan.
+
+La dernière partie de l'équation, soit $P(Y=y\|X\>x)$ est elle instantanée puisque par construction, la catégorie est définie par la vitesse du vent.
+Ainsi, dès que la vitesse atteint 34 noeuds le système peut être considéré comme Tempête Tropicale ou Ouragan.
+
+On pourra alors définir $P(X\ge x) = P(Y=y) . \frac{P(X\ge x|Y=y)}{P(Y=y|X\ge x)}$ avec pour x > 34 $P(Y=y|X\ge x) = 1$.
+
+**A ce stade nous avons 2 options**, la première consiste à estimer empiriquement $P(Y=y)$ de sorte que sur l'ensemble des évènements observés depuis l'an 2000, la probabilité d'observer un évènement de type **TS** ou **HU** soit le nombre de ces évènements rapporté au nombre total d'évènements observé sur la période.
+
+```{r TP4.3.2}
+
+# P(Y) : période d'analyse 2000 - 2021
+
+Y_est <- DT[Year >= 2000 & Categ %in% c("Tropical Storm","Hurricane"), list(N = length(Key))] / DT[Year >= 2000, list(N = length(Key))]
+
+Y <- merge(DT[Year >= 2000 & Categ %in% c("Tropical Storm","Hurricane"), list(N_y = length(Key)),by = list(Year)], DT[Year >= 2000, list(N = length(Key)),by = list(Year)], by = "Year")
+
+Y$p <- Y$N_y/Y$N
+
+ggplot(Y, aes(x = p)) +
+
+geom_density() + theme_classic()
+
+descdist(Y$p, boot = 100)
+
+fit.beta <- fitdist(Y$p, "beta", method = "mme");summary(fit.beta);plot(fit.beta)
+
+```
+
+En posant, comme dans le support de cours, **Y\\\~B(n,p)** avec n le nombre d'évènement par an (que l'on notera Z) et p la probabilité qu'un évènement n dépasse le seuil d'une Tempête Tropicale (**TS**), nous obtenons **p = 70%**
+
+Si l'on s'attarde sur les chiffres, on notera que si 1 seul système traverse la zone il a historiquement 100% de probabilité d'être de type **TS** ou **HU**, cette probabilité est presque la même pour les années avec 3 évènements... Il reste les années à 2 exercices où 3 fois sur 8 la proba est de 100% et 5 fois sur 8 elle est de 50%...
+
+Toutefois, on note dans ce calcul que selon les années cette valeur oscille entre 50% et 100%, ce qui laisse penser que la probabilité d'observer un évènement de type **TS** ou **HU** est dépendant du nombre total de système dans l'année.
+Ce qui nous amène à la seconde option.
+
+**Cette seconde option** consistera à chercher la distribution de Y la catégorie de l'évènement en utilisant à nouveau Bayes, en posant Z la probabilité d'avoir z évènements de type cyclonique par an.
+Ainsi, $P(Y=y)$ peut se définir comme $P(Y=y) = P(Z=z) .\frac{P(Y=y|Z)}{P(Z=z|Y=y)}$ avec $P(Y=y\|Z=z)$ la probabilité d'observer **y** évènements de type **TS** ou **HU** sachant qu'il y a **z** évènements et $P(Z=z)$ la probabilité d'observer **z** évènements.
+On sait que $P(Y=y\|Z=z)$ est nulle si y > z,
+
+```{r TP4.3.3}
+
+# P(Z) : période d'analyse 2000 - 2021
+
+Z <- DT[Year >= 2000, list(N = length(Key)), by = list(Year)]
+
+# La série est incomplète : on ajoute les années sans système
+
+Z <- setorderv(rbind(data.table(Year=2000:2021,N=0)[!Year%in%(Z$Year)], Z),"Year")
+
+# mean(Z$N)
+
+# sd(Z$N)
+
+# A priori mu est différent de sigma donc on privilégirait une loi Binomiale Négative
+
+descdist(Z$N, discrete=T, boot = 100)
+
+fit.poisson <- fitdist(Z$N, "pois");summary(fit.poisson)
+
+fit.negbin <- fitdist(Z$N, "nbinom");summary(fit.negbin)
+
+fit.norm <- fitdist(Z$N, "norm", discrete = T);summary(fit.norm)
+
+# Après execution : l'AIC le plus faible est celui de la loi de Poisson que l'on retiendra donc
+
+fit.Z <- fit.poisson
+
+fit.Z$estimate
+
+# Le nombre d'évènement (tous types confondus) par an pourrait suivre une loi de Poisson.
+
+ggplot(Y, aes(x = p, fill = as.factor(N))) +
+
+geom_density(alpha=0.4) + scale_fill_grey() + theme_classic() +
+
+labs(fill="Nombre annuel de système") +
+
+theme(legend.position="bottom")
+
+# Il semble compliqué d'établir une loi par nombre annuel d'évènement sur aussi peu d'historique...
+
+Y_est_N <- Y[,list(Y_est = sum(N_y)/sum(N), Y_sd = sd(p)),by = list(n=N)]
+
+# Avec ces paramètres il reste possible d'effectuer des tirages aléatoires selon des lois uniformes, normales, binomiales négatives ou de Poisson.
+
+# NB : que faire si Z \> 3 ?
+
+dpois(4:10,fit.Z$estimate)
+
+# environ 5% des tirages poserons question
+
+```
+
+A ce stade, nous pouvons définir une probabilité conditionnelle mais uniquement pour les années ayant 1 à 3 systèmes.
+Si Z >= 4 alors nous sommes coincés.
+Une approche par la théorie de la crédibilité pourrait être testée, cela semble complexe à développer en cours.
+Nous avons toutefois une distribution classique de Z telle que $Z \sim Poisson(\lambda)$.
+
+A partir de là, nous disposons donc d'un loi de distribution de Z et de Y et de Y sachant Z, les lois de Z sachant Y et de Y sachant X sont équivalentes à des indicatrices.
+Par conséquent, si nous ajustons la loi de X sachant Y, nous pourrons alors remonter à la loi de X, le plus simple étant d'opter pour une approche par simulation.
+
+```{r TP4.3.4}
+
+# Cette étape est la même que la 4.2 toutefois elle s'applique sur toutes les données
+
+# Distribution de la vitesse du vent max annuel
+
+descdist(DT$Wind, boot = 100)
+
+maxi <- max(DT$Wind, 180)
+
+mini <- min(DT$Wind, 0)
+
+xscaled <- (DT$Wind-mini)/maxi
+
+fit.beta <- fitdist(xscaled, "beta", method = "mle")
+
+plot(fit.beta); title("BETA")
+
+summary(fit.beta)
+
+fit.gev <- extRemes::fevd(DT$Wind,type="GEV",threshold=35)
+
+plot(fit.gev); title("GEV")
+
+summary(fit.gev)
+
+fit.gpd <- extRemes::fevd(DT$Wind,type="GP",threshold=35)
+
+plot(fit.gpd); title("GPD")
+
+summary(fit.gpd)
+
+```
+
+Il ressort que la **loi Beta semble plus adaptée** à cette modélisation, on fera cependant attention aux ordre de grandeur de l'AIC, les données étant transformée pour l'ajustement de la loi Beta.
+Nous noterons que la distribution de Pareto Généralisée conserve les même défauts que précédemment, notamment sur la queue de distribution.
+Concernant l'approche par GEV, elle démontre des difficultés à expliquer les vents extrêmes.
+Nous noterons que le graphe des période de retour place les points forts dans le bas de l'intervalle de confiance.
+En restant prudent, cela peut venir de la stationnarité des données, le changement climatique engendrant des écarts entre l'historique lointain et les données récentes.
+
+```{r TP4.3.5, message=FALSE, warning=FALSE}
+
+# Nous ajouterons à la probabilité P(Z\>0) : 1-ppois(0, fit.Z$estimate)
+
+Zajust <- 1-ppois(0, fit.Z$estimate)
+
+# Etant donné que nous travaillons sur une loi en combinant 2, il ne sera pas possible de passer par le quantile, on va donc écrire des équations à résoudre
+
+f.beta <- function(x) {
+
+y <- 1 / (Zajust*(1 - pbeta(q = x, fit.beta$estimate[1], fit.beta$estimate[2])))
+
+return(y)
+
+}
+
+f.gev <- function(x) {
+
+y <- 1 / (Zajust*(1 - extRemes::pevd(x, threshold = 35, loc = fit.gev$results$par[1], scale = fit.gev$results$par[2], shape = fit.gev$results$par[3], type = "GEV")))
+
+return(y)
+
+}
+
+f.gpd <- function(x) {
+
+y <- 1 / (Zajust*(1 - extRemes::pevd(x, threshold = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2], type = "GP")))
+
+return(y)
+
+}
+
+inverse = function(fn, interval = NULL, lower = min(interval), upper = max(interval), ...){
+
+Vectorize(function(y){
+
+uniroot(f=function(x){fn(x)-y}, lower=lower, upper=upper, ...)$root
+
+})
+
+}
+
+f.betainv = inverse(f.beta, lower = 0, upper =250)
+
+f.gevinv = inverse(f.gev, lower = 0, upper =250)
+
+f.gpdinv = inverse(f.gpd, lower = 0, upper =250)
+
+ReturnPeriod2 <- data.table(rbind(
+
+data.frame(law = "Beta", PdR_100ans = round(maxi*f.betainv(100)+mini,digits = 1),
+
+PdR_200ans = round(maxi*f.betainv(200)+mini,digits = 1),
+
+PdR_max = round(f.beta((max(DT$Wind)-mini)/maxi),digits = 0),
+
+PdR_cat4 = round(f.beta((113-mini)/maxi),digits = 0),
+
+PdR_cat5 = round(f.beta((137-mini)/maxi),digits = 0)),
+
+data.frame(law = "GEV", PdR_100ans = round(f.gevinv(100),digits = 1),
+
+PdR_200ans = round(f.gevinv(200),digits = 1),
+
+PdR_max = round(f.gev(max(DT$Wind)),digits = 0),
+
+PdR_cat4 = round(f.gev(113),digits = 0),
+
+PdR_cat5 = round(f.gev(137),digits = 0)),
+
+data.frame(law = "GPD", PdR_100ans = round(f.gpdinv(100),digits = 1),
+
+PdR_200ans = round(f.gpdinv(200),digits = 1),
+
+PdR_max = round(f.gpd(max(DT$Wind)),digits = 0),
+
+PdR_cat4 = round(f.gpd(113),digits = 0),
+
+PdR_cat5 = round(f.gpd(137),digits = 0))))
+
+kable(ReturnPeriod2)
+
+```
+
+## Conclusion
+
+Nous avons pu proposer 2 méthodes pour estimer les périodes de retour possible pour les ouragans dans les Antilles FranÃ§aises.
+Chaque approche et chaque modèle ayant ses forces et faiblesses.
+En comparant ces résultats avec les publications disponibles il ressort que nos résultats ne sont pas si loin que Ã§a de ce que d'autres spécialistes ont publiés.
+On notera toutefois que l'incertitude bien que faible peut avoir un impact fort sur les pertes.
+
+La prochaine étape, maintenant que nous avons une estimation sur l'aléa (le risque Ouragan) consiste à estimer les pertes associées à ces évènements.
