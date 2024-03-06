@@ -16,7 +16,7 @@ editor_options:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
 require(pacman)
-  pacman::p_load(c("data.table","dplyr","knitr","kableExtra","sf","viridis","leaflet","plotly","RColorBrewer","mapproj","units","mapsf","cartography","fitdistrplus","extRemes","evd","fExtremes","ks"), install = F, update = F, character.only = T)
+  pacman::p_load(c("data.table","dplyr","knitr","kableExtra","sf","viridis","leaflet","plotly","RColorBrewer","mapproj","units","mapsf","cartography","fitdistrplus","evd","ks","ggplot2","actuar"), install = F, update = F, character.only = T)
 ```
 
 # 1 - Objectifs
@@ -92,7 +92,7 @@ En notant :
                             & = \mathbb{P}(X_{1} \le x) \dots \mathbb{P}(X_{n} \le x) \\
                             & = [F(x)]^{n}
     \end{align}
-    $$ 
+    $$
 
 -   Par conséquent on cherchera la hauteur *h* telle que :\
     $$
@@ -190,20 +190,21 @@ $$
     \gamma = 0 & \text{Gumbel, queue à décroissance exponentielle}\\
     \gamma \lt 0 & \text{Weibull, X admet un point terminal fini}
   \end{cases} 
-$$ 
+$$
+
 ```{r densisty_ext, fig.cap="Densités des distributions extrêmes"}
 set.seed(123)
 # Generate Gumbel Random numbers
-x <- revd(10000,loc=0,scale=1,shape=0)
+x <- rgev(10000,loc=0,scale=1,shape=0)
 plot(density(x), xlim = c(- 5, 5), ylim=c(0,1), 
      xlab = "x", ylab = "densité", main = "")
 
 # Frechet distribution plot
-y <- revd(10000,loc=1,scale=0.7,shape=0.4)
+y <- rgev(10000,loc=1,scale=0.7,shape=0.4)
 lines(density(y),col="red")
 
 ## Weibull Distribution Plot 
-z <- revd(10000,loc=0,scale=1,shape=-1)
+z <- rgev(10000,loc=0,scale=1,shape=-1)
 lines(density(z),col="blue")
 
 legend(x = -5, y = 1, legend = c("Gumbel", "Frechet", "Weibull"),
@@ -305,8 +306,7 @@ $$
 \begin{array}\\
 \gamma = \gamma^{*},& \sigma = \sigma^{*}\theta^{\gamma},& \mu = \mu^{*}-\sigma^{*}\frac{1-\theta^{\gamma}}{\gamma}
 \end{array}
-$$
-Le paramètre de forme de la GEV n'est donc pas modifié, toutefois pour passer d'un modèle inféré sur un échantillon à la distribution globale, nous devrons réaliser une transformation.
+$$ Le paramètre de forme de la GEV n'est donc pas modifié, toutefois pour passer d'un modèle inféré sur un échantillon à la distribution globale, nous devrons réaliser une transformation.
 
 Bien que ces travaux fasse intégralement parti du travail attendu en entreprise d'un statisticien se spécialisant sur les risques climatiques, nous n'aborderons pas comment estimer ce paramètre $\theta$.
 De plus, la stationnarité d'une série temporelle n'étant pas toujours observées, nous n'aborderons pas les méthodes existantes qui permettent de se repositionner dans un cadre stationnaire.
@@ -592,15 +592,12 @@ Une fois la distribution extrême établie et ajustée, nous travaillerons à es
 
 A noter que cela peut se faire loin des plus fortes observations.
 
-
-
 # 4 - Statistiques et étude de la période de retour
 
 L'objectif final est d'établir une période de retour, soit l'inverse de la probabilité de survenance d'un évènement.
 Si l'on s'attarde sur la vitesse du vent, la première étape serait donc de tenter de modéliser la distribution de la vitesse du vent à partir des 174 points disponibles.
 Méfiance toutefois avec cette approche, si plusieurs évènements ont lieu certaines années, l'objectif étant de mesurer plutôt un vent maximal annuel, il faudra retravailler les données.
 Sur cette même idée, si nous n'avons pas de mesure sur une (ou plusieurs) année(s), notre série est tronquée, cela pourra soit être compensé par l'ajout de donnée (à 0?) soit par l'application de la troncature adéquate lors de l'ajustement de la loi.
-
 
 ```{r units}
 load("./data/DT_HU_Antilles.Rdata")
@@ -678,184 +675,95 @@ evir::quant(DT$Wind_km, 0.999)
 ```
 
 On voit bien que certaines années aucun système ne traverse la zone.
-De plus, les *Dépressions Tropicales* ne sont répertoriées, au mieux, qu'à partir des année 1930, et les évènements *autres* à partir des années 2000...  
+De plus, les *Dépressions Tropicales* ne sont répertoriées, au mieux, qu'à partir des année 1930, et les évènements *autres* à partir des années 2000...
 
-Par conséquent, notre historique n'est pas complet, nous pouvons soit réaliser notre modèle à partir des années 2000 (attention peu de profondeur) soit retirer les petits évènements, notre loi sera donc tronquée à gauche.  
+Par conséquent, notre historique n'est pas complet, nous pouvons soit réaliser notre modèle à partir des années 2000 (attention peu de profondeur) soit retirer les petits évènements, notre loi sera donc tronquée à gauche.
 
 Une alternative consisterait à tenter de modéliser un max annuel et ne retenir pour chaque année 1 seul évènement.
 Dans cette hypothèse, les années sans évènement, la vitesse maximale du vent retenue sera de 30 noeuds (soit 55 km/h).
 
 Cette méthode ne colle donc pas avec le cours...
-Nous partirons donc sur une approche POT pour rester cohérent.
 
-### 4.2 - Alternative "Simple"
+### 4.2 - Proposition "simple" : réduire la période d'obsevation
 
-Dans cette section nous allons établir une série temporelle contenant l'évènement annuel ayant les caractéristiques de vitesse de l'évènement le plus fort.
-Pour les années sans évènement nous modéliserons notre loi en partant du principe que nous observons des données tronquées (seuil 35 nœuds).
+Rappel :
+
+$$
+\begin{align} 
+\mathbb{P}(M_{n} \le x) & = \mathbb{P}(\max_{i=1,\dots,N} X_{i} \le x) \\
+& = \mathbb{P}(X_{1} \le x, \dots, X_{n} \le x) \\
+& = \mathbb{P}(X_{1} \le x) \dots \mathbb{P}(X_{n} \le x) \\
+& = [F(x)]^{n}
+\end{align}
+$$
+
+La valeur *x* est donc le quantile d'ordre $1-\alpha$ avec $\alpha = 1 - (1-p)^{1/\hat{N}}$
+
+Nous allons nous restreindre aux données récentes pour l'estimation de $\hat N$ **Cela implique de réduire nos données déjà peu nombreuses !**
+
+L'analyse graphique de la répartition dans le temps du nombre de système par type, nous pousserait à étudier les données à compter de 1925.
+
+**Nous posons donc comme hypothèses que les données sont exhaustives et homogènes à partir de 1925.**
+
 
 ```{r TP4.2.1}
-
-# Base de Vent max par an depuis 1851
-
-DT2 <- DT[,list(Wind = max(Wind)), by = Year]
-
-# Distribution de la vitesse du vent max annuel
-
-descdist(DT2$Wind, boot = 100)
-maxi <- max(DT2$Wind, 180)
-mini <- min(DT2$Wind, 0)
-
-xscaled <- (DT2$Wind-mini)/maxi
-fit.beta <- fitdist(xscaled, "beta", method = "mse")
-plot(fit.beta); title("BETA")
-summary(fit.beta)
-
-fit.gev <- extRemes::fevd(DT2$Wind,type="GEV",threshold=35)
-plot(fit.gev); title("GEV")
-summary(fit.gev)
-
-fit.gpd <- extRemes::fevd(DT2$Wind,type="GP",threshold=35)
-plot(fit.gpd); title("GPD")
-summary(fit.gpd)
-
+# DT[Year >= 1925,length(Key)]
+# Estimation de N chapeau empirique
+Nhat <- DT[Year >= 1925,length(Key)]/(max(DT$Year)-1925+1)
+# On pose p la probabilité de dépassement 1%
+p <- 1/100
+# On en déduit alpha
+alpha = 1 - (1-p)^(1/Nhat)
 ```
 
-Le choix de la loi à retenir s'effectue entre la loi Beta, une GEV et la Distribution de Pareto Généralisée avec un seuil de 35 nœuds.
+Le quantile extrême recherché est donc : `{r} alpha`
+
+Pour analyser la série, nous pourrons soit traiter les données naïvement, soit poser l'hypothèse d'une GEV sur le max annuel, en conservant la période 1925-2024 (données homogènes).
+
+NB : Pour une approche POT (via la GPD donc), nous pourrions utiliser toutes les données avec un seuil de type ouragan, soit 64 noeuds.
 
 ```{r TP4.2.2}
+# Approche "simpliste" 
+# Recherche de lois candidates
+descdist(DT[Year>=1925]$Wind, boot = 100)
+maxi <- max(DT[Year>=1925]$Wind, 180)
+mini <- min(DT[Year>=1925]$Wind, 0)
 
-ReturnPeriod <- data.table(rbind(
+# Distribution de la série sur 1925-2022 : tout points
+xscaled <- (DT[Year>=1925]$Wind-mini)/maxi
+fit.beta <- fitdist(xscaled, "beta", method = "mse")
+plot(fit.beta)
 
-data.frame(law = "Beta", PdR_100ans = round(maxi * qbeta(p = 0.99, fit.beta$estimate[1], fit.beta$estimate[2]) + mini, digits = 1),
 
-PdR_200ans = round(maxi * qbeta(p = 0.995, fit.beta$estimate[1], fit.beta$estimate[2]) + mini, digits = 1),
+# start : définition des points de départ
+start <- list(loc=0, scale=1, shape=0)
 
-PdR_max = round(1 / (1 - pbeta(q = (max(DT$Wind)-mini)/maxi, fit.beta$estimate[1], fit.beta$estimate[2])), digits = 0),
-
-PdR_cat4 = round(1 / (1 - pbeta(q = (113-mini)/maxi, fit.beta$estimate[1], fit.beta$estimate[2])), digits = 0),
-
-PdR_cat5 = round(1 / (1 - pbeta(q = (137-mini)/maxi, fit.beta$estimate[1], fit.beta$estimate[2])), digits = 0)),
-
-data.frame(law = "GEV", PdR_100ans = round(fExtremes::qgev(0.99, mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])[1], digits = 1),
-
-PdR_200ans = round(fExtremes::qgev(0.995, mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])[1], digits = 1),
-
-PdR_max = round(1 / (1 - fExtremes::pgev(max(DT$Wind), mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])),digits = 0),
-
-PdR_cat4 = round(1 / (1 - fExtremes::pgev(113, mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])),digits = 0),
-
-PdR_cat5 = round(1 / (1 - fExtremes::pgev(137, mu = fit.gev$results$par[1], beta = fit.gev$results$par[2], xi = fit.gev$results$par[3])),digits = 0)),
-
-data.frame(law = "GPD", PdR_100ans = round(evd::qgpd(0.99, loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2]), digits = 1),
-
-PdR_200ans = round(evd::qgpd(0.995, loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2]), digits = 1),
-
-PdR_max = round(1 / (1 - evd::pgpd(max(DT$Wind), loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2])),digits = 0),
-
-PdR_cat4 = round(1 / (1 - evd::pgpd(113, loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2])),digits = 0),
-
-PdR_cat5 = round(1 / (1 - evd::pgpd(137, loc = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2])),digits = 0))))
-
-kable(ReturnPeriod)
+# Approche TVE
+# Construction d'une nouvelle série en max annuel :
+Max_ann <- DT[,list(wind = max(Wind)), by = list(Year)]
+fitMax.gev <- fitdist(Max_ann$wind, "gev", start = start)
+plot(fitMax.gev)
 
 ```
 
-A l'étude des courbes, la GPD a un inconvénient majeur, elle a du mal à excéder la vitesse maximale observée... Les autres méthodes permettent de calculer des périodes de retour pour des évènements de catégorie 4 et 5, tout comment les vents observables tous les 100 ou 200 ans...
+On choisirait ici la GEV avec troncature (attention profondeur historique) 
 
-ÃÂtant donné que l'on a parfois observé plusieurs évènements d'une intensité forte la même année, évènement n'étant pas le plus fort de l'année mais largement plus fort que les évènements d'autres années, il convient de rester prudent sur cette première approche.
-Elle permet toutefois de proposer une première réponse à la question du TP.
 
-Si l'on croise ces résultats avec d'autres études, notamment celle réalisée en 2020 par la CCR, on aurait tendance à retenir la GEV, même si cette dernière semble avoir des périodes de retour plus faibles que celle de l'étude de référence.
-De plus, les vents annoncés pour des périodes de retour de 100 ans ou 200 ans sont supérieurs à toutes les vitesses enregistrée dans la base complète (Atlantic : Vmax = 165 kn = 305 km/h).
+```{r TP4.3.5, message=FALSE, warning=FALSE}
 
-### 4.3 - Approche plus complète
+PP_100ans_GEV = qgev(1-alpha, loc = fitMax.gev$estimate[1], scale = fitMax.gev$estimate[2], shape = fitMax.gev$estimate[3])[1]
+# 
+# PP_100ans_GPD = fExtremes::qgpd(1-alpha, mu = fit.gpd$results$par[1], beta = fit.gpd$results$par[2], xi = fit.gpd$results$par[3])[1]
+PP_100ans_GEV
 
-Prenons le temps d'étudier l'intégralité des données et non plus le maximum annuel.
-
-```{r TP4.3.1}
-
-# Densité de tout le set
-
-ggplot(DT, aes(x = Wind)) + geom_density() + theme_classic()
-
-# Densité de tout le set en fonction de l'intensité (non exploitable)
-
-ggplot(DT, aes(x = Wind)) +
-
-geom_density(aes(color = Categ) ) + theme_classic()
-
-# Sélection des évènements à partir de l'année 2000 (set comparable)
-
-ggplot(DT[Year >= 2000], aes(x = Wind)) + geom_density() + theme_classic() +
-
-labs(title='Post 2000 - périmètre comparable')
-
-# Sélection des évènements de type Tropical Storm ou Hurricane (set comparable)
-
-ggplot(DT[Categ %in% c("Tropical Storm","Hurricane")], aes(x = Wind)) + geom_density() + theme_classic() +
-
-labs(title='Tropical Storm & Hurricane')
 
 ```
+La vitesse de vent attendue pour une période de retour de 100 ans est de 177 noeuds, 327 km/h
 
-Nous rappellerons qu'en 4.1 nous avons identifié que l'historique ancien n'était pas à périmètre identique de l'historique récent.
-Ces graphiques montrent le lien immédiat entre la catégorie (fonction du vent) et la vitesse du vent.
-Concernant les données récentes, la distribution s'écarte assez fortement de la distribution complète (et tronquées), ce qui semble moins le cas de la distribution des évènements "majeurs" (type "Tropical Storm" **TS** et "Hurricane" **HU**).
+Pour aller plus loin, nous pouvons ajuster la loi de distribution du nombre annuel de cyclone, puis d'en déduire N et enfin réajuster le chiffre précédant. 
 
-**L'idée ici serait de construire une approche Bayésienne du système.**
-
-La difficulté de l'exercice est de mettre sous forme d'équation notre problématique.\\
-
-Posons X la vitesse de vent maximale au passage dans la zone de danger et Y la catégorie de l'évènement.
-
-$P(X\|Y)=\\frac{P(Y\|X).P(X)}{P(Y)}$
-
-Nous pouvons donc à ajuster $P(X \\ge x\|Y=y)$ la probabilité que X dépasse x noeuds, sachant que les évènements sont de type Tempête Tropicale ou Ouragan.\\
-
-Nous cherchons cependant à ajuster $P(X\\ge x)$ quelle que soit la catégorie y de Y...\\
-
-La probabilité $P(Y=y)$ peut s'ajuster sur un set plus récent et complet et se traduire comme la probabilité qu'un évènement depuis 2000 soit de type Tempête Tropicale ou Ouragan.
-
-La dernière partie de l'équation, soit $P(Y=y\|X\>x)$ est elle instantanée puisque par construction, la catégorie est définie par la vitesse du vent.
-Ainsi, dès que la vitesse atteint 34 noeuds le système peut être considéré comme Tempête Tropicale ou Ouragan.
-
-On pourra alors définir $P(X\ge x) = P(Y=y) . \frac{P(X\ge x|Y=y)}{P(Y=y|X\ge x)}$ avec pour x > 34 $P(Y=y|X\ge x) = 1$.
-
-**A ce stade nous avons 2 options**, la première consiste à estimer empiriquement $P(Y=y)$ de sorte que sur l'ensemble des évènements observés depuis l'an 2000, la probabilité d'observer un évènement de type **TS** ou **HU** soit le nombre de ces évènements rapporté au nombre total d'évènements observé sur la période.
-
-```{r TP4.3.2}
-
-# P(Y) : période d'analyse 2000 - 2021
-
-Y_est <- DT[Year >= 2000 & Categ %in% c("Tropical Storm","Hurricane"), list(N = length(Key))] / DT[Year >= 2000, list(N = length(Key))]
-
-Y <- merge(DT[Year >= 2000 & Categ %in% c("Tropical Storm","Hurricane"), list(N_y = length(Key)),by = list(Year)], DT[Year >= 2000, list(N = length(Key)),by = list(Year)], by = "Year")
-
-Y$p <- Y$N_y/Y$N
-
-ggplot(Y, aes(x = p)) +
-
-geom_density() + theme_classic()
-
-descdist(Y$p, boot = 100)
-
-fit.beta <- fitdist(Y$p, "beta", method = "mme");summary(fit.beta);plot(fit.beta)
-
-```
-
-En posant, comme dans le support de cours, **Y\\\~B(n,p)** avec n le nombre d'évènement par an (que l'on notera Z) et p la probabilité qu'un évènement n dépasse le seuil d'une Tempête Tropicale (**TS**), nous obtenons **p = 70%**
-
-Si l'on s'attarde sur les chiffres, on notera que si 1 seul système traverse la zone il a historiquement 100% de probabilité d'être de type **TS** ou **HU**, cette probabilité est presque la même pour les années avec 3 évènements... Il reste les années à 2 exercices où 3 fois sur 8 la proba est de 100% et 5 fois sur 8 elle est de 50%...
-
-Toutefois, on note dans ce calcul que selon les années cette valeur oscille entre 50% et 100%, ce qui laisse penser que la probabilité d'observer un évènement de type **TS** ou **HU** est dépendant du nombre total de système dans l'année.
-Ce qui nous amène à la seconde option.
-
-**Cette seconde option** consistera à chercher la distribution de Y la catégorie de l'évènement en utilisant à nouveau Bayes, en posant Z la probabilité d'avoir z évènements de type cyclonique par an.
-Ainsi, $P(Y=y)$ peut se définir comme $P(Y=y) = P(Z=z) .\frac{P(Y=y|Z)}{P(Z=z|Y=y)}$ avec $P(Y=y\|Z=z)$ la probabilité d'observer **y** évènements de type **TS** ou **HU** sachant qu'il y a **z** évènements et $P(Z=z)$ la probabilité d'observer **z** évènements.
-On sait que $P(Y=y\|Z=z)$ est nulle si y > z,
-
-```{r TP4.3.3}
-
+```{r}
+# Soit Z la variable aléatoire nombre annuel d'évènement
 # P(Z) : période d'analyse 2000 - 2021
 
 Z <- DT[Year >= 2000, list(N = length(Key)), by = list(Year)]
@@ -864,187 +772,37 @@ Z <- DT[Year >= 2000, list(N = length(Key)), by = list(Year)]
 
 Z <- setorderv(rbind(data.table(Year=2000:2021,N=0)[!Year%in%(Z$Year)], Z),"Year")
 
-# mean(Z$N)
-
-# sd(Z$N)
+mean(Z$N)
+sd(Z$N)
 
 # A priori mu est différent de sigma donc on privilégirait une loi Binomiale Négative
 
 descdist(Z$N, discrete=T, boot = 100)
 
 fit.poisson <- fitdist(Z$N, "pois");summary(fit.poisson)
-
 fit.negbin <- fitdist(Z$N, "nbinom");summary(fit.negbin)
-
 fit.norm <- fitdist(Z$N, "norm", discrete = T);summary(fit.norm)
 
-# Après execution : l'AIC le plus faible est celui de la loi de Poisson que l'on retiendra donc
-
+# Après execution : l'AIC le plus faible est celui de la loi de Poisson que l'on retiendra donc suivi de près de la loi Normale
 fit.Z <- fit.poisson
-
 fit.Z$estimate
 
 # Le nombre d'évènement (tous types confondus) par an pourrait suivre une loi de Poisson.
+# On en déduit alpha'
+alphaP = 1 - (1-p)^(1/fit.Z$estimate)
 
-ggplot(Y, aes(x = p, fill = as.factor(N))) +
 
-geom_density(alpha=0.4) + scale_fill_grey() + theme_classic() +
+PP_100ans_GEVbis = qgev(1-alphaP, loc = fitMax.gev$estimate[1], scale = fitMax.gev$estimate[2], shape = fitMax.gev$estimate[3])[1]
+PP_100ans_GEVbis
 
-labs(fill="Nombre annuel de système") +
-
-theme(legend.position="bottom")
-
-# Il semble compliqué d'établir une loi par nombre annuel d'évènement sur aussi peu d'historique...
-
-Y_est_N <- Y[,list(Y_est = sum(N_y)/sum(N), Y_sd = sd(p)),by = list(n=N)]
-
-# Avec ces paramètres il reste possible d'effectuer des tirages aléatoires selon des lois uniformes, normales, binomiales négatives ou de Poisson.
-
-# NB : que faire si Z \> 3 ?
-
-dpois(4:10,fit.Z$estimate)
-
-# environ 5% des tirages poserons question
-
-```
-
-A ce stade, nous pouvons définir une probabilité conditionnelle mais uniquement pour les années ayant 1 à 3 systèmes.
-Si Z >= 4 alors nous sommes coincés.
-Une approche par la théorie de la crédibilité pourrait être testée, cela semble complexe à développer en cours.
-Nous avons toutefois une distribution classique de Z telle que $Z \sim Poisson(\lambda)$.
-
-A partir de là, nous disposons donc d'un loi de distribution de Z et de Y et de Y sachant Z, les lois de Z sachant Y et de Y sachant X sont équivalentes à des indicatrices.
-Par conséquent, si nous ajustons la loi de X sachant Y, nous pourrons alors remonter à la loi de X, le plus simple étant d'opter pour une approche par simulation.
-
-```{r TP4.3.4}
-
-# Cette étape est la même que la 4.2 toutefois elle s'applique sur toutes les données
-
-# Distribution de la vitesse du vent max annuel
-
-descdist(DT$Wind, boot = 100)
-
-maxi <- max(DT$Wind, 180)
-
-mini <- min(DT$Wind, 0)
-
-xscaled <- (DT$Wind-mini)/maxi
-
-fit.beta <- fitdist(xscaled, "beta", method = "mle")
-
-plot(fit.beta); title("BETA")
-
-summary(fit.beta)
-
-fit.gev <- extRemes::fevd(DT$Wind,type="GEV",threshold=35)
-
-plot(fit.gev); title("GEV")
-
-summary(fit.gev)
-
-fit.gpd <- extRemes::fevd(DT$Wind,type="GP",threshold=35)
-
-plot(fit.gpd); title("GPD")
-
-summary(fit.gpd)
-
-```
-
-Il ressort que la **loi Beta semble plus adaptée** à cette modélisation, on fera cependant attention aux ordre de grandeur de l'AIC, les données étant transformée pour l'ajustement de la loi Beta.
-Nous noterons que la distribution de Pareto Généralisée conserve les même défauts que précédemment, notamment sur la queue de distribution.
-Concernant l'approche par GEV, elle démontre des difficultés à expliquer les vents extrêmes.
-Nous noterons que le graphe des période de retour place les points forts dans le bas de l'intervalle de confiance.
-En restant prudent, cela peut venir de la stationnarité des données, le changement climatique engendrant des écarts entre l'historique lointain et les données récentes.
-
-```{r TP4.3.5, message=FALSE, warning=FALSE}
-
-# Nous ajouterons à la probabilité P(Z\>0) : 1-ppois(0, fit.Z$estimate)
-
-Zajust <- 1-ppois(0, fit.Z$estimate)
-
-# Etant donné que nous travaillons sur une loi en combinant 2, il ne sera pas possible de passer par le quantile, on va donc écrire des équations à résoudre
-
-f.beta <- function(x) {
-
-y <- 1 / (Zajust*(1 - pbeta(q = x, fit.beta$estimate[1], fit.beta$estimate[2])))
-
-return(y)
-
-}
-
-f.gev <- function(x) {
-
-y <- 1 / (Zajust*(1 - extRemes::pevd(x, threshold = 35, loc = fit.gev$results$par[1], scale = fit.gev$results$par[2], shape = fit.gev$results$par[3], type = "GEV")))
-
-return(y)
-
-}
-
-f.gpd <- function(x) {
-
-y <- 1 / (Zajust*(1 - extRemes::pevd(x, threshold = 35, scale = fit.gpd$results$par[1], shape = fit.gpd$results$par[2], type = "GP")))
-
-return(y)
-
-}
-
-inverse = function(fn, interval = NULL, lower = min(interval), upper = max(interval), ...){
-
-Vectorize(function(y){
-
-uniroot(f=function(x){fn(x)-y}, lower=lower, upper=upper, ...)$root
-
-})
-
-}
-
-f.betainv = inverse(f.beta, lower = 0, upper =250)
-
-f.gevinv = inverse(f.gev, lower = 0, upper =250)
-
-f.gpdinv = inverse(f.gpd, lower = 0, upper =250)
-
-ReturnPeriod2 <- data.table(rbind(
-
-data.frame(law = "Beta", PdR_100ans = round(maxi*f.betainv(100)+mini,digits = 1),
-
-PdR_200ans = round(maxi*f.betainv(200)+mini,digits = 1),
-
-PdR_max = round(f.beta((max(DT$Wind)-mini)/maxi),digits = 0),
-
-PdR_cat4 = round(f.beta((113-mini)/maxi),digits = 0),
-
-PdR_cat5 = round(f.beta((137-mini)/maxi),digits = 0)),
-
-data.frame(law = "GEV", PdR_100ans = round(f.gevinv(100),digits = 1),
-
-PdR_200ans = round(f.gevinv(200),digits = 1),
-
-PdR_max = round(f.gev(max(DT$Wind)),digits = 0),
-
-PdR_cat4 = round(f.gev(113),digits = 0),
-
-PdR_cat5 = round(f.gev(137),digits = 0)),
-
-data.frame(law = "GPD", PdR_100ans = round(f.gpdinv(100),digits = 1),
-
-PdR_200ans = round(f.gpdinv(200),digits = 1),
-
-PdR_max = round(f.gpd(max(DT$Wind)),digits = 0),
-
-PdR_cat4 = round(f.gpd(113),digits = 0),
-
-PdR_cat5 = round(f.gpd(137),digits = 0))))
-
-kable(ReturnPeriod2)
 
 ```
 
 ## Conclusion
 
-Nous avons pu proposer 2 méthodes pour estimer les périodes de retour possible pour les ouragans dans les Antilles FranÃ§aises.
-Chaque approche et chaque modèle ayant ses forces et faiblesses.
-En comparant ces résultats avec les publications disponibles il ressort que nos résultats ne sont pas si loin que Ã§a de ce que d'autres spécialistes ont publiés.
+Nous avons pu proposer 1 méthode pour estimer les périodes de retour possible pour les ouragans dans les Antilles Françaises.
+
+En comparant nos résultats avec les publications disponibles il ressort que nos résultats ne sont pas si loin que ça de ce que d'autres spécialistes ont publiés.
 On notera toutefois que l'incertitude bien que faible peut avoir un impact fort sur les pertes.
 
 La prochaine étape, maintenant que nous avons une estimation sur l'aléa (le risque Ouragan) consiste à estimer les pertes associées à ces évènements.
